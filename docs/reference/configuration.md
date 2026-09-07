@@ -78,6 +78,10 @@ configuration.
 | Variable | Default | Boundary |
 |---|---:|---|
 | `BT_ROLE` | `auto` | `hub` for the universal topology; `api` or `proxy` for managed split installs; `all` only for the certified, digest-pinned Community Applications profile. |
+| `API_PORT` | Port | `8390` | Alias for `PORT`. Translation REST + SSE streaming endpoint port. |
+| `PROXY_PORT` | Port | `8080` | Alias for `BT_PROXY_PORT`. Injected reader proxy port. |
+| `CWA_URL` | URL | `""` | Direct URL / IP of your Calibre-Web container (e.g. `http://192.168.0.122:8383`). |
+| `KAVITA_URL` | URL | `""` | Direct URL / IP of your Kavita container (e.g. `http://192.168.0.122:5547`). |
 | `PORT` | `8390` | API listen port inside the container. |
 | `BT_PROXY_PORT` | `8080` | Proxy listen port inside the container. |
 | `BT_CWA_MAX_BODY_SIZE` | `2g` | Finite nginx upload limit for CWA traffic. |

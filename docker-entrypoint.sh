@@ -3,11 +3,63 @@
 set -eu
 umask 027
 
-PORT="${PORT:-8390}"
-BT_PROXY_PORT="${BT_PROXY_PORT:-8080}"
+# Normalize ports: support PORT, API_PORT, BT_API_PORT and BT_PROXY_PORT, PROXY_PORT
+PORT="${PORT:-${API_PORT:-${BT_API_PORT:-8390}}}"
+BT_PROXY_PORT="${BT_PROXY_PORT:-${PROXY_PORT:-8080}}"
+API_PORT="$PORT"
+PROXY_PORT="$BT_PROXY_PORT"
 BT_ROLE="${BT_ROLE:-auto}"
 BT_UI_VERSION="$(cat /app/VERSION 2>/dev/null || echo dev)"
-export PORT BT_PROXY_PORT BT_ROLE BT_UI_VERSION
+
+# Reader upstream normalization: support CWA_URL, CALIBRE_WEB_URL, KAVITA_URL, etc.
+CWA_URL="${CWA_URL:-${CALIBRE_WEB_URL:-${CALIBRE_URL:-${CWA_UPSTREAM:-${BT_CWA_READER_UPSTREAM:-}}}}}"
+KAVITA_URL="${KAVITA_URL:-${KAVITA_UPSTREAM:-${BT_KAVITA_READER_UPSTREAM:-}}}"
+BT_READER_UPSTREAM="${BT_READER_UPSTREAM:-${CWA_UPSTREAM:-${CWA_URL:-${KAVITA_URL:-}}}}"
+
+# Auto-detect reader type if not explicitly configured
+if [ -z "${BT_READER_TYPE:-}" ]; then
+    if [ -n "$KAVITA_URL" ] && [ -z "$CWA_URL" ]; then
+        BT_READER_TYPE="kavita"
+    else
+        BT_READER_TYPE="cwa"
+    fi
+fi
+
+# Local LLM URL aliases & normalization
+BT_LOCAL_URL="${BT_LOCAL_URL:-${LOCAL_LLM_URL:-${LOCAL_URL:-${VLLM_URL:-${OLLAMA_URL:-}}}}}"
+if [ -n "$BT_LOCAL_URL" ]; then
+    case "$BT_LOCAL_URL" in
+        */v1/chat/completions) ;;
+        */v1/chat/completions/) BT_LOCAL_URL="${BT_LOCAL_URL%/}" ;;
+        */v1) BT_LOCAL_URL="${BT_LOCAL_URL}/chat/completions" ;;
+        */v1/) BT_LOCAL_URL="${BT_LOCAL_URL}chat/completions" ;;
+        *:[0-9]*|*:[0-9]*/) BT_LOCAL_URL="${BT_LOCAL_URL%/}/v1/chat/completions" ;;
+    esac
+    export BT_LOCAL_URL
+fi
+
+# Auto-derive auth endpoints if missing
+if [ "${BT_AUTH_MODE:-token}" = "cwa_session" ] && [ -z "${BT_CWA_AUTH_URL:-}" ] && [ -n "$BT_READER_UPSTREAM" ]; then
+    BT_CWA_AUTH_URL="${BT_READER_UPSTREAM}/ajax/emailstat"
+    export BT_CWA_AUTH_URL
+fi
+
+if [ "${BT_AUTH_MODE:-token}" = "reader_session" ] && [ -z "${BT_READER_AUTH_URL:-}" ] && [ -n "$BT_READER_UPSTREAM" ]; then
+    if [ "$BT_READER_TYPE" = "kavita" ]; then
+        BT_READER_AUTH_URL="${BT_READER_UPSTREAM}/api/Account"
+    else
+        BT_READER_AUTH_URL="${BT_READER_UPSTREAM}/ajax/emailstat"
+    fi
+    export BT_READER_AUTH_URL
+fi
+
+# Auto-derive public origin if empty
+if [ -z "${BT_PUBLIC_ORIGIN:-}" ] && [ -n "$BT_READER_UPSTREAM" ]; then
+    BT_PUBLIC_ORIGIN="$BT_READER_UPSTREAM"
+    export BT_PUBLIC_ORIGIN
+fi
+
+export PORT API_PORT BT_API_PORT BT_PROXY_PORT PROXY_PORT BT_ROLE BT_UI_VERSION     BT_READER_UPSTREAM BT_READER_TYPE CWA_URL KAVITA_URL
 
 if [ "$BT_ROLE" = "auto" ]; then
     if [ -n "${BT_READER_UPSTREAM:-${CWA_UPSTREAM:-}}" ]; then

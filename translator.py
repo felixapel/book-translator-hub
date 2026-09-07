@@ -160,7 +160,14 @@ def _output_cap(input_text: str, ceiling: int) -> int:
     budget = int(_estimate_tokens(input_text) * BT_OUTPUT_TOKEN_FACTOR) + BT_OUTPUT_TOKEN_FLOOR
     return min(ceiling, max(1, BT_OUTPUT_TOKEN_FLOOR, budget))
 
-LOCAL_BACKEND_URL = os.environ.get("BT_LOCAL_URL", "http://localhost:1234/v1/chat/completions")
+LOCAL_BACKEND_URL = (
+    os.environ.get("BT_LOCAL_URL")
+    or os.environ.get("LOCAL_LLM_URL")
+    or os.environ.get("LOCAL_URL")
+    or os.environ.get("VLLM_URL")
+    or os.environ.get("OLLAMA_URL")
+    or "http://localhost:1234/v1/chat/completions"
+)
 
 PROVIDER_ENDPOINTS = {
     "openai": ("https://api.openai.com/v1/chat/completions", "openai"),

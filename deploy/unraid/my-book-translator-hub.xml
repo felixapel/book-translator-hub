@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>book-translator-hub</Name>
+  <Repository>local/book-translator-hub:2.4.0</Repository>
+  <Registry/>
+  <Network>media-net</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/felixapel/book-translator-hub/issues</Support>
+  <Project>https://github.com/felixapel/book-translator-hub</Project>
+  <Overview>Book Translator Hub v2.4.0 — Universal, zero-wait bilingual reading overlay and translation engine for Calibre-Web, Kavita, and self-hosted ebook libraries powered by local (vLLM/Ollama/Bifrost) or cloud LLMs.</Overview>
+  <Category>Tools:Utilities</Category>
+  <WebUI>http://[IP]:[PORT:8385]</WebUI>
+  <Icon>https://raw.githubusercontent.com/JPDVM2014/icons/35eb799864f41502e741075abfc6457ba0edefd6/calibre-web-logo.png</Icon>
+
+  <!-- Persistent Storage -->
+  <Config Name="Appdata (Database)" Target="/app/data" Default="/mnt/user/appdata/book-translator-api/data" Mode="rw" Description="Holds SQLite translations.db and persistent caching" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/book-translator-api/data</Config>
+
+  <!-- Network & Ports -->
+  <Config Name="API Port" Target="8390" Default="8390" Mode="tcp" Description="Direct translation API port (REST + real-time SSE streaming)" Type="Port" Display="always" Required="true" Mask="false">8390</Config>
+  <Config Name="Proxy Port" Target="8080" Default="8385" Mode="tcp" Description="Reader proxy injection port (browse CWA or Kavita through this port to get the translation overlay)" Type="Port" Display="always" Required="true" Mask="false">8385</Config>
+  <Config Name="Role" Target="BT_ROLE" Default="api" Mode="" Description="Runtime role: api (pure API mode), proxy (reverse proxy overlay), all (combined API + proxy), hub (multi-reader)" Type="Variable" Display="always" Required="false" Mask="false">api</Config>
+
+  <!-- Reader Connections (IPs / URLs) -->
+  <Config Name="Calibre-Web (CWA) URL" Target="CWA_URL" Default="" Mode="" Description="URL of your Calibre-Web / CWA container (e.g. http://192.168.0.122:8383 or http://calibre-web-automated:8083)" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Kavita URL" Target="KAVITA_URL" Default="" Mode="" Description="URL of your Kavita container (e.g. http://192.168.0.122:5547 or http://kavita:5000)" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+
+  <!-- LLM Backend Configuration -->
+  <Config Name="LLM Provider" Target="LLM_PROVIDER" Default="local" Mode="" Description="LLM backend provider: local (vLLM / Ollama / Bifrost), openai, anthropic, gemini, groq, deepseek, openrouter" Type="Variable" Display="always" Required="false" Mask="false">local</Config>
+  <Config Name="LLM Model" Target="LLM_MODEL" Default="gemma4-12b" Mode="" Description="Model name (e.g. gemma4-12b, qwen2.5-14b, deepseek-chat, gpt-4o-mini)" Type="Variable" Display="always" Required="false" Mask="false">gemma4-12b</Config>
+  <Config Name="Local LLM URL" Target="BT_LOCAL_URL" Default="http://192.168.0.122:2819/v1/chat/completions" Mode="" Description="OpenAI-compatible endpoint of your local LLM (vLLM/Ollama/Bifrost). Use host IP or host.docker.internal, NOT localhost." Type="Variable" Display="always" Required="false" Mask="false">http://192.168.0.122:2819/v1/chat/completions</Config>
+  <Config Name="LLM API Key" Target="LLM_API_KEY" Default="" Mode="" Description="API key for cloud providers (leave blank when using local LLM)" Type="Variable" Display="always" Required="false" Mask="true"></Config>
+
+  <!-- Security & CORS -->
+  <Config Name="Allowed Origins" Target="BT_ALLOWED_ORIGINS" Default="http://localhost:8083,http://localhost:8383" Mode="" Description="Comma-separated allowed web origins for CORS (e.g. https://books.example.com,https://kavita.example.com)" Type="Variable" Display="always" Required="false" Mask="false">http://localhost:8083,http://localhost:8383</Config>
+  <Config Name="Auth Mode" Target="BT_AUTH_MODE" Default="disabled" Mode="" Description="Authentication: disabled (for private LAN), token (recommended for Internet/reverse proxy), cwa_session, reader_session" Type="Variable" Display="always" Required="false" Mask="false">disabled</Config>
+  <Config Name="Allow Insecure Auth" Target="BT_ALLOW_INSECURE_AUTH" Default="true" Mode="" Description="Set to true to allow BT_AUTH_MODE=disabled on private LAN" Type="Variable" Display="always" Required="false" Mask="false">true</Config>
+
+  <!-- Performance & Concurrency Tuning -->
+  <Config Name="Batch Size" Target="BT_BATCH_SIZE" Default="6" Mode="" Description="Paragraphs per LLM call. Higher = faster throughput on GPU models." Type="Variable" Display="always" Required="false" Mask="false">6</Config>
+  <Config Name="Max Upstream Inflight" Target="BT_MAX_UPSTREAM_INFLIGHT" Default="8" Mode="" Description="Maximum simultaneous requests sent to LLM backend (e.g. 4-8 for GPU, 1-2 for CPU)" Type="Variable" Display="always" Required="false" Mask="false">8</Config>
+  <Config Name="Max Concurrent" Target="BT_MAX_CONCURRENT" Default="8" Mode="" Description="Maximum simultaneous batch requests processed by Hub" Type="Variable" Display="always" Required="false" Mask="false">8</Config>
+  <Config Name="Request Timeout (s)" Target="BT_TIMEOUT" Default="90" Mode="" Description="Timeout in seconds before an LLM request is aborted" Type="Variable" Display="always" Required="false" Mask="false">90</Config>
+  <Config Name="Context Window" Target="BT_CONTEXT_WINDOW" Default="1" Mode="" Description="Surrounding paragraphs given as [CONTEXT] to LLM for literary coherence" Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
+  <Config Name="Max Tokens (single)" Target="BT_MAX_TOKENS" Default="1024" Mode="" Description="Token ceiling for a single paragraph request" Type="Variable" Display="advanced" Required="false" Mask="false">1024</Config>
+  <Config Name="Max Tokens (batch)" Target="BT_BATCH_MAX_TOKENS" Default="4096" Mode="" Description="Token ceiling for a batched request" Type="Variable" Display="advanced" Required="false" Mask="false">4096</Config>
+  <Config Name="Batch Source Budget" Target="BT_BATCH_SOURCE_TOKEN_BUDGET" Default="1500" Mode="" Description="Max input source tokens per batch" Type="Variable" Display="advanced" Required="false" Mask="false">1500</Config>
+  <Config Name="Timezone" Target="TZ" Default="Europe/Berlin" Mode="" Description="Container timezone" Type="Variable" Display="always" Required="false" Mask="false">Europe/Berlin</Config>
+</Container>

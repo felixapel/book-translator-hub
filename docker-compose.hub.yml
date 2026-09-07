@@ -8,7 +8,7 @@
 
 services:
   book-translator-hub:
-    image: ${BT_IMAGE:-cwa-ebook-translate-plugin:local}
+    image: ${BT_IMAGE:-local/book-translator-hub:2.4.0}
     build: .
     container_name: ${BT_INSTALL_NAME:-book-translator-hub}
     env_file:

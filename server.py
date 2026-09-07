@@ -375,6 +375,43 @@ ALLOWED_ORIGINS = {
     ).split(",")
     if o.strip()
 }
+
+# Auto-register reader and public origins into CORS whitelist
+def _extract_origin_candidate(url_candidate: str) -> str | None:
+    if not url_candidate or not isinstance(url_candidate, str):
+        return None
+    candidate = url_candidate.strip()
+    if not candidate:
+        return None
+    try:
+        parsed = urlsplit(candidate)
+        if parsed.scheme in ("http", "https") and parsed.hostname:
+            port_part = f":{parsed.port}" if parsed.port else ""
+            host_part = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+            return f"{parsed.scheme}://{host_part}{port_part}"
+    except Exception:
+        pass
+    return None
+
+for _var_name in (
+    "CWA_URL",
+    "CALIBRE_WEB_URL",
+    "CALIBRE_URL",
+    "CWA_UPSTREAM",
+    "BT_CWA_READER_UPSTREAM",
+    "KAVITA_URL",
+    "KAVITA_UPSTREAM",
+    "BT_KAVITA_READER_UPSTREAM",
+    "BT_READER_UPSTREAM",
+    "BT_PUBLIC_ORIGIN",
+):
+    _cand = os.environ.get(_var_name, "")
+    _origin = _extract_origin_candidate(_cand)
+    if _origin:
+        try:
+            ALLOWED_ORIGINS.add(_validate_cors_origin(_origin))
+        except ValueError:
+            pass
 BT_ALLOW_PRIVATE_LAN = os.environ.get("BT_ALLOW_PRIVATE_LAN", "true").lower() in ("1", "true", "yes")
 _PRIVATE_ORIGIN_RE = re.compile(
     r"^https?://("
@@ -2218,6 +2255,6 @@ def _get_cleanup_token() -> str:
 # ── Main ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8390"))
+    port = int(os.environ.get("PORT") or os.environ.get("API_PORT") or os.environ.get("BT_API_PORT") or "8390")
     log.info("Starting book-translator on port %d...", port)
     app.run(host="0.0.0.0", port=port, debug=False)

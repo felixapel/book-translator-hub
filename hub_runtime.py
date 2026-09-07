@@ -158,11 +158,13 @@ def _origin(source: Mapping[str, str], name: str, *, upstream_port: int | None =
         or parsed.fragment
     ):
         raise HubConfigError(f"{name} must be one exact http(s) origin")
-    if upstream_port is not None and (parsed.scheme != "http" or port != upstream_port):
-        raise HubConfigError(f"{name} must use http on port {upstream_port}")
+    if upstream_port is not None and parsed.scheme != "http":
+        raise HubConfigError(f"{name} must use http for upstream connection")
     normalized_host = f"[{hostname}]" if ":" in hostname else hostname
     if port is not None:
         normalized_host += f":{port}"
+    elif upstream_port is not None:
+        normalized_host += f":{upstream_port}"
     if parsed.netloc.casefold() != normalized_host.casefold():
         raise HubConfigError(f"{name} must contain one exact authority")
     if upstream_port is None and parsed.scheme != "https":
@@ -355,9 +357,18 @@ class HubConfig:
             prefix = f"BT_{reader.upper()}_"
             expected_upstream_port = 8083 if reader == "cwa" else 5000
             public_origin = _origin(values, prefix + "PUBLIC_ORIGIN")
+            # Support CWA_URL and KAVITA_URL aliases if READER_UPSTREAM is not set
+            upstream_key = prefix + "READER_UPSTREAM"
+            if upstream_key not in values:
+                if reader == "cwa" and ("CWA_URL" in values or "CWA_UPSTREAM" in values):
+                    values = dict(values)
+                    values[upstream_key] = values.get("CWA_URL") or values.get("CWA_UPSTREAM")
+                elif reader == "kavita" and ("KAVITA_URL" in values or "KAVITA_UPSTREAM" in values):
+                    values = dict(values)
+                    values[upstream_key] = values.get("KAVITA_URL") or values.get("KAVITA_UPSTREAM")
             upstream = _origin(
                 values,
-                prefix + "READER_UPSTREAM",
+                upstream_key,
                 upstream_port=expected_upstream_port,
             )
             version = _required(values, prefix + "READER_VERSION")

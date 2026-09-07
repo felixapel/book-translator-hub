@@ -236,6 +236,16 @@ def _validated_reader_upstream(env: Mapping[str, str]) -> str:
         raise ProxyConfigError("BT_READER_TYPE is unsupported")
     generic = env.get("BT_READER_UPSTREAM", "")
     legacy = env.get("CWA_UPSTREAM", "")
+    kavita = env.get("KAVITA_URL") or env.get("KAVITA_UPSTREAM") or ""
+    cwa = env.get("CWA_URL") or env.get("CALIBRE_WEB_URL") or env.get("CALIBRE_URL") or ""
+    if not generic and reader_type == "kavita" and kavita:
+        generic = kavita
+        env = dict(env)
+        env["BT_READER_UPSTREAM"] = generic
+    elif not generic and not legacy and reader_type == "cwa" and cwa:
+        generic = cwa
+        env = dict(env)
+        env["BT_READER_UPSTREAM"] = generic
     if reader_type == "kavita" and legacy:
         raise ProxyConfigError("CWA_UPSTREAM is forbidden for Kavita")
     if generic and legacy and generic != legacy:
