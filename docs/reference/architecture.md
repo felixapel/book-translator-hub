@@ -116,15 +116,18 @@ cannot detach an active API container from its bind source.
   rendition hooks (`relocated`, `rendered`). Kavita discovers only the current
   `.book-content`, derives book/chapter cache scope from numeric route segments,
   observes Angular DOM replacement and tears down on navigation.
-- **Translation Management**: Coordinates visible-first translation chunking;
-  background sequential whole-chapter prefetch is disabled until the reader
-  explicitly enables it. Managed batch size and background-only pacing come
-  from a bounded, non-secret server-owned browser contract. Only explicit
-  pre-provider admission `429`s are replayed automatically.
-- **Client Cache**: Keeps context-scoped translations in memory. Durable
-  `localStorage` is an explicit opt-in for trusted single-user browsers; keys
-  include release, languages, book, chapter, and stable DOM position so
-  repeated text in different literary contexts cannot collide.
+- **Translation Management**: Coordinates Instant Viewport Rush (concurrent
+  micro-batches for top 3 visible paragraphs), real-time Server-Sent Events
+  (SSE) token streaming for the primary visible paragraph (~160ms TTFT), and
+  Zero-Wait Directional Lookahead prefetching. Background whole-chapter prefetch
+  is managed through a bounded, non-secret server-owned browser contract. Only
+  explicit pre-provider admission `429`s are replayed automatically.
+- **Client Cache**: Dual-layer architecture combining instant in-memory maps,
+  synchronous `localStorage` preference settings, and high-capacity asynchronous
+  `IndexedDB` (`BookTranslatorDB` / `translations_v1`) for whole-book offline
+  caching without browser quota errors. Keys include release, languages, book,
+  chapter, and stable DOM position so repeated text in different literary contexts
+  cannot collide.
 
 ### Backend (`book-translator-api`)
 - **Authentication (`auth.py`, `reader_session.py`)**: Fails closed in token,
@@ -132,8 +135,9 @@ cannot detach an active API container from its bind source.
   cache/provider work. Native reader proof is isolated to exchange; opaque
   sessions are in-memory, bounded and short-lived. Subjects become connector-
   scoped hashes and never expose upstream user ids to cache or metrics.
-- **Flask Server (`server.py`)**: Exposes translation endpoints `/translate`
-  and `/translate/batch` along with metrics and health probes. Only shallow
+- **Flask Server (`server.py`)**: Exposes translation endpoints `/translate`,
+  `/translate/batch`, and real-time SSE streaming `/translate/stream` along with
+  metrics and health probes. Only shallow
   liveness/readiness routes bypass authentication. Observability uses a fixed
   schema for HTTP classes and bounded auth, admission, provider, deadline, and
   partial-batch outcomes; it never creates labels from request or book data.

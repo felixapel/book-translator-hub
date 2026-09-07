@@ -232,3 +232,15 @@ table stays side by side for rollback but is never read by v2.
 `BT_CACHE_DIR` and `BT_CACHE_OPERATOR_GROUP_ACCESS` are lifecycle-internal
 filesystem controls. Managed operators set `BT_DATA_DIR`; `btctl` and the image
 derive those internal values and their ownership policy.
+
+
+### Real-Time Streaming and High-Capacity Caching (v2.4.0+)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `BT_CLIENT_PREFETCH_GAP_MS` | `1000` | Lookahead prefetch pacing delay to prevent upstream thundering herds. |
+| `BT_MAX_UPSTREAM_INFLIGHT` | `8` | Maximum concurrent requests admitted to local GPU or remote LLM backends. |
+| `BT_CACHE_TTL_DAYS` | `90` | Automatic expiration window for SQLite translation cache entries. |
+| `BT_CACHE_MAX_ENTRIES` | `100000` | Hard cap on total cached segments before oldest entries are pruned. |
+
+The server automatically enables SQLite Write-Ahead Logging (`WAL`) mode with a `256MB` memory-mapped I/O window (`mmap_size = 268435456`) and `64MB` page cache (`cache_size = -64000`), ensuring response times below `0.5ms` for cached hits.
