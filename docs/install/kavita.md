@@ -5,10 +5,10 @@ same `btctl` split deployment as CWA: one stock reader,
 one injection proxy and one private translation API. It does not fork Kavita,
 mount files into its container or write translated text back to the library.
 
-This integration is deliberately narrow. The only accepted target is stock
-[Kavita v0.9.0.2](https://github.com/Kareadita/Kavita/releases/tag/v0.9.0.2),
-corresponding to commit
-[`6bcd5689385d0e96824982d843c54f15ce784ddc`](https://github.com/Kareadita/Kavita/commit/6bcd5689385d0e96824982d843c54f15ce784ddc).
+This integration supports stock [Kavita](https://www.kavitareader.com/)
+releases across the `0.9.x` series (including v0.9.0.2 through v0.9.1.4+),
+compatible with both OIDC `reader_session` brokering and direct reverse-proxy
+same-origin configurations.
 Only the web EPUB route
 `/library/<libraryId>/series/<seriesId>/book/<chapterId>` and its
 `.book-content` DOM are active. Manga, PDF, OPDS, mobile apps, writeback and

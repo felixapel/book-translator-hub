@@ -366,3 +366,30 @@ For managed hub or split installs, also include the redacted first failed doctor
 check; for Community Applications, include the first container startup or
 request error instead. Remove cookies, Authentik headers, public IPs, private
 filesystem paths, book text, and all LLM credentials before sharing.
+
+## Reader pages load slowly or UI feels sluggish
+
+If Calibre-Web or Kavita takes many seconds to load initial pages, check your
+reverse proxy compression and script injection attributes:
+
+1. **Reverse proxy compression:** When using `sub_filter` with `proxy_set_header Accept-Encoding ""`,
+   upstream services return uncompressed responses so the proxy can match `</head>`.
+   Ensure your edge proxy (e.g., SWAG, Nginx, Traefik) has `gzip on;` enabled with
+   `gzip_proxied any;` and comprehensive MIME types. Without proxy-level compression,
+   massive single-page application bundles (such as Kavita's ~838 KB JavaScript bundle
+   and ~490 KB stylesheet) are sent in uncompressed plain text on every page load.
+2. **Deferred script execution:** Ensure the injected script tag specifies `defer`:
+   `<script src="/bt-static/loader.js" defer></script>`. Without `defer`, the browser
+   blocks DOM parsing and delays First Contentful Paint while awaiting the script and
+   its `/bt-config.json` network roundtrip.
+
+## Translation overlay does not appear in Kavita
+
+1. **Check `/bt-config.json`:** Verify that `GET https://your-kavita-domain/bt-config.json`
+   returns `"readerType":"kavita"` and a supported `readerVersion` (such as `"0.9.1.4"`).
+   If `readerType` is missing or set to `cwa`, the loader stays inert on Kavita routes.
+2. **Supported routes:** The overlay activates exclusively when an EPUB is opened
+   at `/library/:libraryId/series/:seriesId/book/:chapterId`. Non-EPUB views, manga,
+   PDFs, and library overview pages are intentionally ignored to prevent overhead.
+3. **Check DevTools Console:** Ensure no error like `unsupported reader version contract`
+   is logged.
