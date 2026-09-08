@@ -53,11 +53,6 @@ if [ "${BT_AUTH_MODE:-token}" = "reader_session" ] && [ -z "${BT_READER_AUTH_URL
     export BT_READER_AUTH_URL
 fi
 
-# Auto-derive public origin if empty
-if [ -z "${BT_PUBLIC_ORIGIN:-}" ] && [ -n "$BT_READER_UPSTREAM" ]; then
-    BT_PUBLIC_ORIGIN="$BT_READER_UPSTREAM"
-    export BT_PUBLIC_ORIGIN
-fi
 
 export PORT API_PORT BT_API_PORT BT_PROXY_PORT PROXY_PORT BT_ROLE BT_UI_VERSION     BT_READER_UPSTREAM BT_READER_TYPE CWA_URL KAVITA_URL
 

@@ -96,7 +96,7 @@
     let readerRouteActive = false;
 
     // UI / status state
-    let prefetchEnabled = localStorage.getItem('bt_prefetch') !== '0'; // default ON for zero-wait reading
+    let prefetchEnabled = localStorage.getItem('bt_prefetch') === '1'; // default ON for zero-wait reading
     // Privacy decision scoped to this reader tab/book. Never restore it from
     // browser storage: every new book session starts with remote fallback off.
     let allowCloudFallback = false;
@@ -1827,65 +1827,7 @@
         // Paint any visible paragraphs that were already cached (revisited page).
         renderMode(visibleEls);
 
-        const uncachedVisible = collectUncached(visibleEls).map(x => ({...x, gen: myGen}));
-
-        // ── Instant Viewport Rush: First 1, 2, 3 uncached visible paragraphs ──
-        // Instead of waiting in a sequential queue, dispatch the top visible
-        // paragraphs concurrently via /translate (direct single text).
-        // vLLM on the GPU processes them in parallel with Continuous Batching,
-        // delivering all 3 in ~2 seconds with progressive per-paragraph reveal!
-        const rushLimit = 3;
-        const rushItems = uncachedVisible.slice(0, rushLimit);
-        visibleQueue = uncachedVisible.slice(rushLimit);
-
-        if (rushItems.length > 0) {
-            isTranslating = true;
-            inflightCount += rushItems.length;
-            refreshStatus();
-
-            rushItems.forEach(async (item, idx) => {
-                try {
-                    let data;
-                    if (idx === 0 && window.ReadableStream) {
-                        data = await postStream(item.text, (partial) => {
-                            if (item.gen === generation && translationMode !== 'off' && readerRouteActive) {
-                                renderStreamingProgress(item.el, partial);
-                            }
-                        });
-                    } else {
-                        data = await postSingle(item.text);
-                    }
-                    if (item.gen !== generation || translationMode === 'off' || !readerRouteActive) {
-                        return;
-                    }
-                    if (data && data.translated && !isBadTranslation(data.translated)) {
-                        translatedParagraphs[item.hash] = data.translated;
-                        rateLimitResponses.delete(item.hash);
-                        chapterDone++;
-                        schedulePersist();
-                        renderMode([item.el]); // Instant progressive reveal!
-                    } else if (data && data.error === 'rate_limited') {
-                        visibleQueue.unshift(item);
-                        rateLimitUntil = Date.now() + ((data.retry_after || 2) * 1000);
-                    } else {
-                        failedParagraphs.add(item.hash);
-                        chapterDone++;
-                        errorCount++;
-                    }
-                } catch (err) {
-                    console.error("[BookTranslator] Rush translation error:", err);
-                    failedParagraphs.add(item.hash);
-                    chapterDone++;
-                    errorCount++;
-                } finally {
-                    inflightCount = Math.max(0, inflightCount - 1);
-                    if (inflightCount === 0 && visibleQueue.length === 0) {
-                        isTranslating = false;
-                    }
-                    refreshStatus();
-                }
-            });
-        }
+        visibleQueue = collectUncached(visibleEls).map(x => ({...x, gen: myGen}));
         
         const allParagraphs = getParagraphs();
         const visibleSet = new Set(visibleEls);
@@ -2242,16 +2184,23 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
             // second line of defense against any other transient layout blip.
             // Check for page turns even while prefetching in background!
             // Background prefetch does not shift visible layout.
-            if (!isTranslating) {
+            if (!isTranslating && !isPrefetching) {
                 const visible = getVisibleParagraphs();
                 if (visible.length > 0) {
                     const firstText = getParagraphText(visible[0]);
                     if (firstText) {
                         const hash = hashText(firstText);
                         if (hash !== lastFirstVisibleHash) {
-                            lastFirstVisibleHash = hash;
+                            if (hash === pendingFirstVisibleHash) {
+                                // Seen on the previous poll too — confirmed, not a blip.
+                                lastFirstVisibleHash = hash;
+                                pendingFirstVisibleHash = null;
+                                scheduleTranslate('page_turn', { immediate: true, forceRediscover: true });
+                            } else {
+                                pendingFirstVisibleHash = hash;
+                            }
+                        } else {
                             pendingFirstVisibleHash = null;
-                            scheduleTranslate('page_turn', { immediate: true, forceRediscover: true });
                         }
                     }
                 }
