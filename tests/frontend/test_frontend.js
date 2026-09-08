@@ -710,6 +710,67 @@ async function assertKavitaSessionLoaderContract() {
     loaderDom.window.close();
 }
 
+
+async function assertKavitaDirectLoaderContract() {
+    const loaderDom = new JSDOM(
+        '<!DOCTYPE html><html><head></head><body><main>Library</main></body></html>',
+        {
+            url: 'https://kavita.example.test/library',
+            runScripts: 'dangerously'
+        }
+    );
+    const requests = [];
+    loaderDom.window.fetch = async (url, options) => {
+        requests.push({ url, options });
+        if (url === '/bt-config.json') {
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    apiUrl: '/bt-api',
+                    authMode: 'cwa_session',
+                    credentials: 'same-origin',
+                    readerType: 'kavita',
+                    readerVersion: '0.9.1.4',
+                    readerContractVersion: 'kavita-0.9.0.2-epub-v1',
+                    batchSize: 6,
+                    prefetchGapMs: 0
+                })
+            };
+        }
+        throw new Error('unexpected fetch: ' + url);
+    };
+
+    const element = loaderDom.window.document.createElement('script');
+    element.textContent = loaderCode;
+    loaderDom.window.document.head.appendChild(element);
+    await wait(30);
+    assert.strictEqual(
+        loaderDom.window.document.querySelectorAll('script[src*="translator.js"]').length,
+        0,
+        'Kavita assets must stay inert outside the exact EPUB reader route'
+    );
+
+    loaderDom.window.history.pushState(
+        {}, '', '/library/7/series/42/book/99'
+    );
+    const deadline = Date.now() + 1000;
+    while (!loaderDom.window.document.querySelector('script[src*="translator.js"]')
+            && Date.now() < deadline) await wait(10);
+
+    assert(loaderDom.window.document.querySelector('script[src*="translator.js"]'),
+        'Kavita translator assets must load upon entering the reader route without requiring session exchange');
+    assert.strictEqual(requests.length, 1, 'Direct mode only fetches bt-config.json');
+    assert.strictEqual(loaderDom.window.BOOK_TRANSLATOR.readerType, 'kavita');
+    assert.strictEqual(loaderDom.window.BOOK_TRANSLATOR.readerVersion, '0.9.1.4');
+    assert.strictEqual(
+        loaderDom.window.BOOK_TRANSLATOR.readerContractVersion,
+        'kavita-0.9.0.2-epub-v1'
+    );
+    assert.strictEqual(loaderDom.window.BOOK_TRANSLATOR.batchSize, 6);
+    loaderDom.window.close();
+}
+
 async function assertKavitaReaderAdapterContract() {
     const kavitaDom = new JSDOM(`<!DOCTYPE html><html><body>
       <main class="book-container">
@@ -1015,6 +1076,7 @@ async function runTest() {
         'Cloud fallback consent must never persist across reader sessions');
 
     await assertKavitaSessionLoaderContract();
+    await assertKavitaDirectLoaderContract();
     await assertKavitaReaderAdapterContract();
 
     console.log("All assertions passed.");

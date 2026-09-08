@@ -16,9 +16,12 @@
     const READER_TYPE = configuredReaderType === 'kavita' ? 'kavita' : 'cwa';
     const STRICT_READER_ROUTE = configuredReaderType === 'cwa'
         || configuredReaderType === 'kavita';
+    const validKavitaVersion = cfg.readerVersion === '0.9.0.2'
+        || /^0\.9\.[0-9]+(\.[0-9]+)?$/.test(cfg.readerVersion || '');
     const validKavitaContract = READER_TYPE === 'kavita'
-        && cfg.readerVersion === '0.9.0.2'
-        && cfg.readerContractVersion === 'kavita-0.9.0.2-epub-v1';
+        && validKavitaVersion
+        && (cfg.readerContractVersion === 'kavita-0.9.0.2-epub-v1'
+            || cfg.readerContractVersion === 'kavita-epub-v1');
     if (configuredReaderType && configuredReaderType !== 'cwa'
             && configuredReaderType !== 'kavita') {
         console.error('[BookTranslator] disabled: unsupported reader type');

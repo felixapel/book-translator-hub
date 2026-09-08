@@ -65,29 +65,53 @@
         var prefetchGapMs = optionalBoundedInteger(
             managed, 'prefetchGapMs', 0, 10000, 0
         );
+        var readerType = managed.readerType || 'cwa';
+        if (readerType !== 'cwa' && readerType !== 'kavita') {
+            throw new Error('unsupported reader authentication contract');
+        }
+
         if (managed.authMode !== 'reader_session') {
-            if (managed.readerType && managed.readerType !== 'cwa') {
-                throw new Error('unsupported reader authentication contract');
+            if (readerType === 'cwa') {
+                return {
+                    apiUrl: managed.apiUrl,
+                    authMode: managed.authMode,
+                    credentials: managed.credentials,
+                    readerType: 'cwa',
+                    readerVersion: '',
+                    readerContractVersion: 'cwa-epub-v1',
+                    batchSize: batchSize,
+                    prefetchGapMs: prefetchGapMs
+                };
+            }
+            var rVer = managed.readerVersion || '0.9.1.4';
+            var validKavitaVer = rVer === '0.9.0.2' || /^0\.9\.[0-9]+(\.[0-9]+)?$/.test(rVer);
+            var validKavitaContract = (managed.readerContractVersion === 'kavita-0.9.0.2-epub-v1'
+                || managed.readerContractVersion === 'kavita-epub-v1'
+                || !managed.readerContractVersion);
+            if (!validKavitaVer || !validKavitaContract) {
+                throw new Error('unsupported reader version contract');
             }
             return {
                 apiUrl: managed.apiUrl,
                 authMode: managed.authMode,
                 credentials: managed.credentials,
-                readerType: 'cwa',
-                readerVersion: '',
-                readerContractVersion: 'cwa-epub-v1',
+                readerType: 'kavita',
+                readerVersion: rVer,
+                readerContractVersion: managed.readerContractVersion || 'kavita-0.9.0.2-epub-v1',
                 batchSize: batchSize,
                 prefetchGapMs: prefetchGapMs
             };
         }
 
-        var validCwaVersion = managed.readerType === 'cwa'
+        var validCwaVersion = readerType === 'cwa'
             && (managed.readerVersion === '3.1.4'
                 || /^4\.[0-9]+\.[0-9]+$/.test(managed.readerVersion))
             && managed.readerContractVersion === 'cwa-epub-v1';
-        var validKavitaVersion = managed.readerType === 'kavita'
-            && managed.readerVersion === '0.9.0.2'
-            && managed.readerContractVersion === 'kavita-0.9.0.2-epub-v1';
+        var validKavitaVersion = readerType === 'kavita'
+            && (managed.readerVersion === '0.9.0.2'
+                || /^0\.9\.[0-9]+(\.[0-9]+)?$/.test(managed.readerVersion))
+            && (managed.readerContractVersion === 'kavita-0.9.0.2-epub-v1'
+                || managed.readerContractVersion === 'kavita-epub-v1');
         if (!validCwaVersion && !validKavitaVersion) {
             throw new Error('unsupported reader version contract');
         }
@@ -95,7 +119,7 @@
             apiUrl: managed.apiUrl,
             authMode: managed.authMode,
             credentials: managed.credentials,
-            readerType: managed.readerType,
+            readerType: readerType,
             readerVersion: managed.readerVersion,
             readerContractVersion: managed.readerContractVersion,
             batchSize: batchSize,
