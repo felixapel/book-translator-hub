@@ -20,8 +20,8 @@ FROM source-exporter AS operator
 
 # Docker is an operator-only dependency. It never enters the production image.
 RUN apk add --no-cache \
-    docker-cli=29.5.3-r0 \
-    docker-cli-buildx=0.34.1-r0
+    docker-cli=29.5.3-r1 \
+    docker-cli-buildx=0.34.1-r1
 
 ARG BTCTL_SOURCE_REVISION
 ARG BTCTL_SOURCE_VERSION
