@@ -31,7 +31,7 @@ RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requireme
 
 # Copy only runtime modules; tests, benchmarks, and operator helpers do not
 # belong in the published execution artifact.
-COPY auth.py cache.py hub_runtime.py reader_session.py server.py singleflight.py translator.py work_budget.py ./
+COPY auth.py btctl_core.py cache.py epub_export.py feedback.py glossary.py hub_runtime.py reader_session.py server.py singleflight.py translator.py work_budget.py ./
 COPY VERSION ./
 COPY static/loader.js static/translator.css static/translator.js ./static/
 COPY proxy/nginx-main.conf proxy/nginx.conf.template proxy/render_config.py ./proxy/
