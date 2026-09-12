@@ -81,6 +81,40 @@ if [ "$BT_ROLE" = "all" ]; then
     export BT_TRUSTED_PROXIES="${BT_TRUSTED_PROXIES:-127.0.0.1/32}"
 fi
 
+validate_ports() {
+    for port_spec in "PORT=$PORT" "BT_PROXY_PORT=$BT_PROXY_PORT"; do
+        port_name="${port_spec%%=*}"
+        port_value="${port_spec#*=}"
+        case "$port_value" in
+            ''|*[!0-9]*|??????*)
+                echo "[entrypoint] ERROR: $port_name must be a decimal port from 1 to 65535" >&2
+                exit 78
+                ;;
+        esac
+        if [ "$port_value" -lt 1 ] || [ "$port_value" -gt 65535 ]; then
+            echo "[entrypoint] ERROR: $port_name must be a decimal port from 1 to 65535" >&2
+            exit 78
+        fi
+    done
+}
+
+validate_network_list() {
+    list_name="$1"
+    list_value="$2"
+    [ -n "$list_value" ] || return 0
+    if ! python3 -c 'import ipaddress,sys; [ipaddress.ip_network(c, strict=False) for c in sys.argv[1].split(",") if c.strip()] or True' "$list_value" >/dev/null 2>&1; then
+        echo "[entrypoint] ERROR: $list_name must be a comma-separated list of IP networks" >&2
+        exit 78
+    fi
+}
+
+validate_trusted_proxies() {
+    validate_network_list BT_TRUSTED_PROXIES "${BT_TRUSTED_PROXIES:-}"
+    if [ "${BT_AUTH_MODE:-token}" = "forwarded" ]; then
+        validate_network_list BT_IDENTITY_TRUSTED_PROXIES "${BT_IDENTITY_TRUSTED_PROXIES:-}"
+    fi
+}
+
 check_data_dir() {
     if [ ! -d /app/data ]; then
         echo "[entrypoint] ERROR: /app/data is missing" >&2
@@ -171,12 +205,17 @@ configure_proxy() {
     export BT_API_UPSTREAM BT_CWA_MAX_BODY_SIZE BT_CWA_IDENTITY_HEADER \
         BT_READER_UPSTREAM BT_READER_TYPE
 
+    if [ -L /tmp/nginx ]; then
+        echo "[entrypoint] ERROR: /tmp/nginx must not be a symlink" >&2
+        exit 78
+    fi
     mkdir -p \
         /tmp/nginx/client_temp \
         /tmp/nginx/proxy_temp \
         /tmp/nginx/fastcgi_temp \
         /tmp/nginx/uwsgi_temp \
         /tmp/nginx/scgi_temp
+    chmod 700 /tmp/nginx
     python /app/proxy/render_config.py \
         /app/proxy/nginx.conf.template /tmp/nginx/proxy.conf \
         /tmp/nginx/browser-config.json
@@ -196,6 +235,8 @@ start_proxy() {
 case "$BT_ROLE" in
     api)
         check_data_dir
+        validate_ports
+        validate_trusted_proxies
         validate_api_auth
         initialize_cache
         echo "[entrypoint] API role on :${PORT}"
@@ -204,6 +245,7 @@ case "$BT_ROLE" in
             --timeout 120 server:app
         ;;
     proxy)
+        validate_ports
         configure_proxy
         echo "[entrypoint] proxy role on :${BT_PROXY_PORT} -> ${BT_READER_UPSTREAM}"
         exec nginx -c /app/proxy/nginx-main.conf -e /dev/stderr -g 'daemon off;'
@@ -214,6 +256,8 @@ esac
 # topology uses two role-specific containers so each has its own health and
 # restart lifecycle.
 check_data_dir
+validate_ports
+validate_trusted_proxies
 validate_api_auth
 initialize_cache
 configure_proxy

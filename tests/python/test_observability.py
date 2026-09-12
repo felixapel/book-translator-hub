@@ -16,6 +16,11 @@ from translator import BatchRecoveryTracker, ProviderUnavailableError
 from work_budget import WorkBudgetExceeded
 
 
+def all_cache_miss(entries, *, record_hit=False):
+    """Batch-probe stub: every entry misses, aligned with the request."""
+    return [None] * len(entries)
+
+
 class ObservabilityContractTests(unittest.TestCase):
     def setUp(self):
         self.original_authenticator = server.AUTHENTICATOR
@@ -213,6 +218,39 @@ class ObservabilityContractTests(unittest.TestCase):
             "failures": 1,
         })
 
+    def test_stats_snapshot_is_cached_then_invalidated_by_writes(self):
+        try:
+            server._invalidate_stats_cache()
+            first = self.client.get("/stats")
+            self.assertEqual(first.status_code, 200)
+            with mock.patch.object(
+                server, "get_cache_stats", return_value={"total_entries": 999}
+            ) as cache_stats:
+                second = self.client.get("/stats")
+                cache_stats.assert_not_called()
+                self.assertEqual(second.get_json(), first.get_json())
+            server._invalidate_stats_cache()
+            with mock.patch.object(
+                server, "get_cache_stats", return_value={"total_entries": 1}
+            ) as cache_stats:
+                third = self.client.get("/stats")
+                cache_stats.assert_called_once()
+                self.assertEqual(third.get_json(), {"total_entries": 1})
+        finally:
+            server._invalidate_stats_cache()
+
+    def test_cache_lookup_failure_fails_open_to_provider(self):
+        with (
+            mock.patch.object(
+                server, "get_cached", side_effect=RuntimeError("db locked")
+            ),
+            mock.patch.object(server, "translate_text", return_value=("hola", "local")),
+            mock.patch.object(server, "put_cache"),
+        ):
+            response = self.client.post("/translate", json={"text": "hola"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["translated"], "hola")
+
     def test_recovery_metrics_survive_work_budget_failure(self):
         captured = {}
 
@@ -223,7 +261,7 @@ class ObservabilityContractTests(unittest.TestCase):
             raise WorkBudgetExceeded("attempts")
 
         with (
-            mock.patch.object(server, "get_cached", return_value=None),
+            mock.patch.object(server, "get_cached_many", side_effect=all_cache_miss),
             mock.patch.object(
                 server, "translate_batch", side_effect=exhaust_after_recovery
             ),
@@ -250,7 +288,7 @@ class ObservabilityContractTests(unittest.TestCase):
             raise WorkBudgetExceeded("attempts")
 
         with (
-            mock.patch.object(server, "get_cached", return_value=None),
+            mock.patch.object(server, "get_cached_many", side_effect=all_cache_miss),
             mock.patch.object(
                 server, "translate_batch", side_effect=exhaust_after_recovery
             ),

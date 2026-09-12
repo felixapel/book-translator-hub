@@ -417,6 +417,10 @@ def _provider_from_config(
     """Validate one role's environment values and return a resolved backend."""
     if not isinstance(model, str) or not model.strip() or model != model.strip():
         raise ValueError("LLM model must be a non-empty clean value")
+    if isinstance(api_key, str):
+        api_key = api_key.strip()
+    if isinstance(custom_api_key, str):
+        custom_api_key = custom_api_key.strip()
     if name == CUSTOM_PROVIDER_ID:
         if api_key or not custom_api_key:
             raise ValueError(
@@ -838,6 +842,75 @@ Rules:
 
 SEGMENT_PROTOCOL = "cwa-translate-segments/v1"
 TRANSLATION_CONTRACT_VERSION = "cwa-translate-contract/v2"
+
+# ── Glossary ─────────────────────────────────────────────────────────────────
+# Optional per-book exact-term mappings, injected into the system prompt and
+# folded into the cache fingerprint so entries can never poison each other.
+
+# A glossary entry is a (source_term, target_term) pair. Plain tuples keep
+# the call sites small; normalization lives in glossary_fingerprint and
+# format_glossary_block so every consumer shares one contract.
+GlossaryTerm = tuple[str, str]
+
+GLOSSARY_MAX_TERMS_IN_PROMPT = int(
+    os.environ.get("BT_GLOSSARY_MAX_TERMS_IN_PROMPT", "50"))
+
+
+def _normalize_glossary(
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None,
+) -> list[tuple[str, str]]:
+    if not glossary:
+        return []
+    normalized: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for entry in glossary:
+        if (
+            not isinstance(entry, (list, tuple))
+            or len(entry) != 2
+            or not isinstance(entry[0], str)
+            or not isinstance(entry[1], str)
+        ):
+            raise ValueError("glossary entries must be (source, target) pairs")
+        source, target = entry[0].strip(), entry[1].strip()
+        if not source or not target:
+            raise ValueError("glossary terms must be non-empty strings")
+        key = source.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append((source, target))
+    normalized.sort(key=lambda pair: pair[0].casefold())
+    return normalized[:max(1, GLOSSARY_MAX_TERMS_IN_PROMPT)]
+
+
+def glossary_fingerprint(
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None,
+) -> str:
+    """Stable fingerprint of the glossary portion of a prompt contract."""
+    normalized = _normalize_glossary(glossary)
+    if not normalized:
+        return "no-glossary"
+    return _contract_hash(
+        [TRANSLATION_CONTRACT_VERSION, "glossary", normalized]
+    )
+
+
+def format_glossary_block(
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None,
+) -> str:
+    """Render the glossary as an appendable system-prompt block."""
+    normalized = _normalize_glossary(glossary)
+    if not normalized:
+        return ""
+    lines = "\n".join(f"- {source} => {target}" for source, target in normalized)
+    return (
+        "\n\nGlossary (exact terms, always use these translations):\n"
+        + lines
+    )
+
+
+def _with_glossary(system_prompt: str, glossary) -> str:
+    return system_prompt + format_glossary_block(glossary)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1506,10 +1579,15 @@ def cache_lookup_models(*, allow_cloud_fallback: bool = False) -> list[str]:
 
 
 def single_cache_contract(
-    source_lang: str, target_lang: str
+    source_lang: str,
+    target_lang: str,
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None = None,
 ) -> TranslationCacheContract:
-    system_prompt = SYSTEM_PROMPT.format(
-        source_lang=source_lang, target_lang=target_lang
+    system_prompt = _with_glossary(
+        SYSTEM_PROMPT.format(
+            source_lang=source_lang, target_lang=target_lang
+        ),
+        glossary,
     )
     return TranslationCacheContract(
         prompt_hash=_contract_hash(
@@ -1554,8 +1632,9 @@ def _single_operation_key(
     max_retries: int,
     timeout: int,
     allow_cloud_fallback: bool,
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None = None,
 ) -> str:
-    contract = single_cache_contract(source_lang, target_lang)
+    contract = single_cache_contract(source_lang, target_lang, glossary)
     return _contract_hash([
         TRANSLATION_CONTRACT_VERSION,
         "singleflight-single",
@@ -1582,11 +1661,15 @@ def _translate_text_operation(
     timeout: int,
     budget: WorkBudget,
     allow_cloud_fallback: bool,
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None = None,
 ) -> tuple[str, str]:
     """Run one single-text completion without entering singleflight."""
     budget.ensure_active()
-    system = SYSTEM_PROMPT.format(
-        source_lang=source_lang, target_lang=target_lang
+    system = _with_glossary(
+        SYSTEM_PROMPT.format(
+            source_lang=source_lang, target_lang=target_lang
+        ),
+        glossary,
     )
     return _complete(
         text,
@@ -1610,6 +1693,7 @@ def translate_text(
     *,
     operation_namespace: str = "legacy",
     allow_cloud_fallback: bool = False,
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None = None,
 ) -> tuple[str, str]:
     """Translate a single text. Returns (translated_text, provider_name)."""
     resolved_timeout = BT_TIMEOUT if timeout is None else timeout
@@ -1624,6 +1708,7 @@ def translate_text(
             resolved_timeout,
             budget,
             allow_cloud_fallback,
+            glossary,
         )
 
     wait_budget = create_work_budget()
@@ -1635,6 +1720,7 @@ def translate_text(
         max_retries=max_retries,
         timeout=resolved_timeout,
         allow_cloud_fallback=allow_cloud_fallback,
+        glossary=glossary,
     )
     try:
         flight = _TRANSLATION_SINGLEFLIGHT.run(
@@ -1647,6 +1733,7 @@ def translate_text(
                 resolved_timeout,
                 create_work_budget(),
                 allow_cloud_fallback,
+                glossary,
             ),
             timeout=wait_budget.remaining_seconds(),
         )
@@ -1725,6 +1812,7 @@ def translate_text_stream(
     budget: Optional[WorkBudget] = None,
     *,
     allow_cloud_fallback: bool = False,
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None = None,
 ):
     """
     Translate a single text, yielding deltas as they are generated.
@@ -1734,10 +1822,14 @@ def translate_text_stream(
     if budget is None:
         budget = create_work_budget()
     budget.ensure_active()
-    system = SYSTEM_PROMPT.format(source_lang=source_lang, target_lang=target_lang)
+    system = _with_glossary(
+        SYSTEM_PROMPT.format(source_lang=source_lang, target_lang=target_lang),
+        glossary,
+    )
     max_tokens = _output_cap(text, BT_MAX_TOKENS)
 
     providers = _eligible_providers(allow_cloud_fallback=allow_cloud_fallback)
+    last_provider_error: _ProviderCallError | None = None
 
     for p in providers:
         attempt_recorded = False
@@ -1761,6 +1853,15 @@ def translate_text_stream(
             if attempt_recorded:
                 _record_provider_call("failure")
             raise
+        except _ProviderCallError as e:
+            if attempt_recorded:
+                _record_provider_call("failure")
+            last_provider_error = e
+            log.warning(
+                "provider=%s stream failed status=%s error_type=%s, trying fallback",
+                p.name, e.status_code, e.error_type,
+            )
+            continue
         except Exception as e:
             if attempt_recorded:
                 _record_provider_call("failure")
@@ -1770,7 +1871,19 @@ def translate_text_stream(
             )
             continue
 
-    raise ProviderUnavailableError("All providers exhausted for stream")
+    rate_limited = (
+        last_provider_error is not None
+        and last_provider_error.status_code == 429
+    )
+    raise ProviderUnavailableError(
+        "All providers exhausted for stream",
+        error_code=(
+            "provider_rate_limited" if rate_limited else "provider_unavailable"
+        ),
+        retry_after_seconds=(
+            last_provider_error.retry_after_seconds if rate_limited else None
+        ),
+    )
 
 
 
@@ -1906,6 +2019,7 @@ def batch_cache_contract(
     idxs: list[int],
     source_lang: str,
     target_lang: str,
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None = None,
 ) -> TranslationCacheContract:
     """Fingerprint the deterministic semantics of one provider batch.
 
@@ -1928,8 +2042,11 @@ def batch_cache_contract(
     ):
         raise ValueError("batch cache contract contains an invalid index")
 
-    system_prompt = BATCH_SYSTEM_PROMPT.format(
-        source_lang=source_lang, target_lang=target_lang
+    system_prompt = _with_glossary(
+        BATCH_SYSTEM_PROMPT.format(
+            source_lang=source_lang, target_lang=target_lang
+        ),
+        glossary,
     )
     context_block = _build_context_block(all_texts, idxs)
     semantic_context = {
@@ -1956,6 +2073,7 @@ def _translate_group_operation(
     budget: WorkBudget,
     allow_cloud_fallback: bool,
     recovery_tracker: Optional[BatchRecoveryTracker],
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None = None,
 ) -> list[BatchTranslationItem]:
     """
     Translate a group with a strict segment envelope and bounded recovery.
@@ -1973,12 +2091,16 @@ def _translate_group_operation(
     if len(group_texts) == 1 and BT_CONTEXT_WINDOW == 0:
         translated, provider = _translate_text_operation(
             group_texts[0], source_lang, target_lang,
-            1, BT_TIMEOUT, budget, allow_cloud_fallback)
+            1, BT_TIMEOUT, budget, allow_cloud_fallback, glossary)
         return [BatchTranslationItem(
             translated, provider, True, "direct")]
 
     context_block = _build_context_block(all_texts, idxs)
-    system = BATCH_SYSTEM_PROMPT.format(source_lang=source_lang, target_lang=target_lang)
+    system = _with_glossary(
+        BATCH_SYSTEM_PROMPT.format(
+            source_lang=source_lang, target_lang=target_lang),
+        glossary,
+    )
     used_segment_ids: set[str] = set()
 
     for envelope_attempt in range(2):
@@ -2044,6 +2166,7 @@ def _translate_group_operation(
                 BT_TIMEOUT,
                 budget,
                 allow_cloud_fallback,
+                glossary,
             )
             recovered.append(BatchTranslationItem(
                 translated, provider, False, "paragraph_fallback"))
@@ -2091,6 +2214,7 @@ def _translate_group(
     budget: WorkBudget,
     allow_cloud_fallback: bool,
     recovery_tracker: Optional[BatchRecoveryTracker],
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None = None,
 ) -> list[BatchTranslationItem]:
     if len(idxs) == 1 and BT_CONTEXT_WINDOW == 0:
         translated, provider = _translate_text_operation(
@@ -2101,6 +2225,7 @@ def _translate_group(
             BT_TIMEOUT,
             budget,
             allow_cloud_fallback,
+            glossary,
         )
         return [BatchTranslationItem(
             translated, provider, True, "direct")]
@@ -2114,6 +2239,7 @@ def _translate_group(
         budget,
         allow_cloud_fallback,
         recovery_tracker,
+        glossary,
     )
 
 
@@ -2129,6 +2255,7 @@ def translate_batch_detailed(
     operation_namespace: str = "legacy",
     allow_cloud_fallback: bool = False,
     recovery_tracker: Optional[BatchRecoveryTracker] = None,
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None = None,
 ) -> list[BatchTranslationItem]:
     """
     Translate multiple texts and retain internal recovery/cache provenance.
@@ -2194,6 +2321,7 @@ def translate_batch_detailed(
                 budget,
                 allow_cloud_fallback,
                 recovery_tracker,
+                glossary,
             )
         except SegmentProtocolError as exc:
             # Publish an unexpected typed protocol failure before cancelling
@@ -2295,6 +2423,7 @@ def translate_batch(
     selected_groups: Optional[list[list[int]]] = None,
     operation_namespace: str = "legacy",
     allow_cloud_fallback: bool = False,
+    glossary: list[GlossaryTerm] | tuple[GlossaryTerm, ...] | None = None,
 ) -> list[tuple[str, str]]:
     """Backward-compatible batch API returning one ``(text, provider)`` tuple."""
     detailed = translate_batch_detailed(
@@ -2306,6 +2435,7 @@ def translate_batch(
         selected_groups=selected_groups,
         operation_namespace=operation_namespace,
         allow_cloud_fallback=allow_cloud_fallback,
+        glossary=glossary,
     )
     return [(item.text, item.provider) for item in detailed]
 

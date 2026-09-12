@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import os
 import re
@@ -12,6 +13,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
@@ -160,12 +162,23 @@ def _origin(source: Mapping[str, str], name: str, *, upstream_port: int | None =
         raise HubConfigError(f"{name} must be one exact http(s) origin")
     if upstream_port is not None and parsed.scheme != "http":
         raise HubConfigError(f"{name} must use http for upstream connection")
-    normalized_host = f"[{hostname}]" if ":" in hostname else hostname
+    host_only = f"[{hostname}]" if ":" in hostname else hostname
+    default_port = 443 if parsed.scheme == "https" else 80
+    if port is not None and upstream_port is None and port == default_port:
+        port = None
     if port is not None:
-        normalized_host += f":{port}"
+        normalized_host = f"{host_only}:{port}"
+        acceptable = {normalized_host.casefold()}
     elif upstream_port is not None:
-        normalized_host += f":{upstream_port}"
-    if parsed.netloc.casefold() != normalized_host.casefold():
+        normalized_host = f"{host_only}:{upstream_port}"
+        acceptable = {normalized_host.casefold(), host_only.casefold()}
+    else:
+        normalized_host = host_only
+        acceptable = {
+            normalized_host.casefold(),
+            f"{host_only}:{default_port}".casefold(),
+        }
+    if parsed.netloc.casefold() not in acceptable:
         raise HubConfigError(f"{name} must contain one exact authority")
     if upstream_port is None and parsed.scheme != "https":
         loopback = hostname.casefold() == "localhost"
@@ -215,9 +228,9 @@ def _validate_provider_environment(environment: Mapping[str, str], reader: str) 
     def validate_role(prefix: str, *, fallback: bool) -> None:
         provider = environment.get(prefix + "PROVIDER", "")
         model = environment.get(prefix + "MODEL", "")
-        api_key = environment.get(prefix + "API_KEY", "")
+        api_key = environment.get(prefix + "API_KEY", "").strip()
         custom_endpoint = environment.get(prefix + "CUSTOM_ENDPOINT", "")
-        custom_key = environment.get(prefix + "CUSTOM_API_KEY", "")
+        custom_key = environment.get(prefix + "CUSTOM_API_KEY", "").strip()
         if fallback and not provider and not model and not api_key and not custom_endpoint and not custom_key:
             return
         if provider not in providers or not model:
@@ -231,6 +244,8 @@ def _validate_provider_environment(environment: Mapping[str, str], reader: str) 
             if (
                 parsed.scheme not in {"http", "https"}
                 or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
                 or parsed.path != "/v1/chat/completions"
                 or parsed.query
                 or parsed.fragment
@@ -249,6 +264,8 @@ def _validate_provider_environment(environment: Mapping[str, str], reader: str) 
             if (
                 parsed.scheme != "https"
                 or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
                 or parsed.path != "/v1/chat/completions"
                 or parsed.query
                 or parsed.fragment
@@ -649,11 +666,12 @@ def supervise(
             old_handlers[signum] = signal.getsignal(signum)
             signal.signal(signum, request_stop)
     try:
-        for spec in process_specs(config):
+        specs = process_specs(config)
+        for spec in specs:
             print(f"[hub] event=child_start name={spec.name}", file=sys.stderr)
             processes.append(popen_factory(spec.argv, env=spec.environment))
         while not stopping:
-            for spec, process in zip(process_specs(config), processes):
+            for spec, process in zip(specs, processes):
                 returncode = process.poll()
                 if returncode is not None:
                     print(
@@ -665,26 +683,57 @@ def supervise(
             sleep(1)
         _stop_processes(processes)
         return 0
+    except BaseException:
+        # A failed spawn or a monitor fault must not orphan children that
+        # already started: stop everything before propagating the failure.
+        _stop_processes(processes)
+        raise
     finally:
         if install_signal_handlers:
             for signum, handler in old_handlers.items():
                 signal.signal(signum, handler)
 
 
+def _ping_reader(proxy_port: int) -> bool:
+    """Probe one reader ping endpoint; True only on an exact HTTP 200."""
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{proxy_port}/bt-api/ping",
+            method="GET",
+        )
+        with urllib.request.urlopen(request, timeout=4) as response:
+            return response.status == 200
+    except (OSError, urllib.error.URLError, http.client.HTTPException):
+        return False
+
+
 def healthcheck(config: HubConfig | None = None) -> int:
     selected = config or HubConfig.from_environment()
-    for reader in selected.readers:
-        try:
-            request = urllib.request.Request(
-                f"http://127.0.0.1:{reader.proxy_port}/bt-api/ping",
-                method="GET",
-            )
-            with urllib.request.urlopen(request, timeout=4) as response:
-                if response.status != 200:
-                    return 1
-        except (OSError, urllib.error.URLError):
-            return 1
-    return 0
+    ports = [reader.proxy_port for reader in selected.readers]
+    if len(ports) <= 1:
+        return 0 if all(_ping_reader(port) for port in ports) else 1
+    # Readers are independent listeners: probe them concurrently so one slow
+    # reader cannot push the whole healthcheck past the orchestrator budget.
+    with ThreadPoolExecutor(max_workers=len(ports)) as executor:
+        healthy = list(executor.map(_ping_reader, ports))
+    return 0 if all(healthy) else 1
+
+
+def _probe_reader_providers(environment: dict[str, str], script: str, runner) -> int:
+    """Probe one reader provider set in an isolated, bounded child process."""
+    try:
+        result = runner(
+            [sys.executable, "-c", script],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 1
+    return 0 if result.returncode == 0 else 1
 
 
 def healthcheck_providers(
@@ -700,22 +749,26 @@ def healthcheck_providers(
         "raise SystemExit(0 if h and all("
         "v.get('status')=='ok' for v in h.values()) else 3)"
     )
-    for reader in selected.readers:
-        try:
-            result = runner(
-                [sys.executable, "-c", script],
-                env=reader.environment,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=120,
-                check=False,
+    readers = list(selected.readers)
+    if len(readers) <= 1:
+        codes = [
+            _probe_reader_providers(reader.environment, script, runner)
+            for reader in readers
+        ]
+    else:
+        # Provider probes are per-reader isolated subprocesses: run them
+        # concurrently so the serial 120s budgets cannot stack past the
+        # orchestrator healthcheck timeout.
+        with ThreadPoolExecutor(max_workers=len(readers)) as executor:
+            codes = list(
+                executor.map(
+                    lambda reader: _probe_reader_providers(
+                        reader.environment, script, runner
+                    ),
+                    readers,
+                )
             )
-        except (OSError, subprocess.SubprocessError):
-            return 1
-        if result.returncode != 0:
-            return 1
-    return 0
+    return 0 if all(code == 0 for code in codes) else 1
 
 
 def main(argv: list[str] | None = None) -> int:

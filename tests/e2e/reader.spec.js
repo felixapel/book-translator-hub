@@ -225,6 +225,21 @@ test('the real overlay translates, reports state, and keeps cloud consent explic
         'Spanish->French: A second paragraph checks queue order.'
     );
 
+    const feedbackPosts = [];
+    await page.route('**/bt-api/feedback', async route => {
+        feedbackPosts.push(route.request().postDataJSON());
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ feedback: { para_key: 'e2e', rating: 1 } }),
+        });
+    });
+    await chapter.locator('#paragraph-one .bt-feedback .bt-fb-btn').first().click();
+    await expect.poll(() => feedbackPosts.length).toBe(1);
+    expect(feedbackPosts[0].rating).toBe(1);
+    expect(typeof feedbackPosts[0].para_key).toBe('string');
+    expect(feedbackPosts[0].book_id).toBe('42');
+
     const snapshot = await toolbar.ariaSnapshot();
     expect(snapshot).toContain('button');
     expect(snapshot).toContain('combobox');

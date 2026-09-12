@@ -118,6 +118,12 @@
 #bt-bar[data-mode="bilingual"] #bt-toggle .bt-dot { background: var(--bt-bilingual); }
 #bt-bar[data-mode="translated"] #bt-toggle .bt-dot { background: var(--bt-translated); }
 
+/* Speech controls (speak/pause toggle + stop) */
+#bt-speak, #bt-stop { padding: 6px 9px; font-size: 14px; line-height: 1; }
+#bt-speak[aria-pressed="true"] { background: rgba(255, 255, 255, 0.18); }
+#bt-stop:disabled { opacity: 0.35; cursor: default; }
+#bt-stop:disabled:hover { background: transparent; }
+
 /* Language select */
 #bt-lang {
     appearance: none;
@@ -165,7 +171,8 @@
 #bt-bar[data-state="chapter"] #bt-status,
 #bt-bar[data-state="ratelimit"] #bt-status,
 #bt-bar[data-state="done"] #bt-status,
-#bt-bar[data-state="error"] #bt-status { display: inline-flex; }
+#bt-bar[data-state="error"] #bt-status,
+#bt-bar[data-state="offline"] #bt-status { display: inline-flex; }
 
 #bt-spinner {
     width: 15px; height: 15px; flex: 0 0 auto;
@@ -177,12 +184,14 @@
 @keyframes bt-spin { to { transform: rotate(360deg); } }
 /* Spinner only while actively working */
 #bt-bar[data-state="done"] #bt-spinner,
-#bt-bar[data-state="error"] #bt-spinner { display: none; }
+#bt-bar[data-state="error"] #bt-spinner,
+#bt-bar[data-state="offline"] #bt-spinner { display: none; }
 
 #bt-status-text { font-size: 12px; font-weight: 500; letter-spacing: 0.1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #bt-bar[data-state="done"] #bt-status-text { color: #8ed99f; }
 #bt-bar[data-state="error"] #bt-status { cursor: pointer; }
 #bt-bar[data-state="error"] #bt-status-text { color: #ff9e96; }
+#bt-bar[data-state="offline"] #bt-status-text { color: #ffd54f; }
 
 /* ── Progress bar (thin, along the bottom edge of the pill) ─────────── */
 #bt-progress {
@@ -283,6 +292,37 @@ button.bt-menu-item {
 }
 button.bt-menu-item:focus-visible { outline: 2px solid var(--bt-bilingual); }
 .bt-menu-sep { height: 1px; margin: 4px 2px; background: rgba(255, 255, 255, 0.12); }
+.bt-gloss-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 4px 10px; font-size: 12px;
+}
+.bt-gloss-terms { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
+.bt-gloss-del {
+    flex: 0 0 auto; width: 22px; height: 22px; border: 0; border-radius: 6px;
+    background: transparent; color: inherit; font-size: 14px; line-height: 1;
+    cursor: pointer; opacity: 0.6;
+}
+.bt-gloss-del:hover { background: rgba(255, 255, 255, 0.12); opacity: 1; }
+.bt-feedback { display: inline-flex; gap: 2px; margin-left: 6px; vertical-align: baseline; }
+.bt-fb-btn {
+    border: 0; border-radius: 6px; background: transparent; color: inherit;
+    font-size: 12px; line-height: 1; padding: 2px 4px; cursor: pointer; opacity: 0.45;
+}
+.bt-fb-btn:hover { opacity: 1; background: rgba(127, 127, 127, 0.15); }
+.bt-fb-btn:focus-visible { outline: 2px solid var(--bt-bilingual); opacity: 1; }
+.bt-fb-btn.bt-fb-active { opacity: 1; background: rgba(127, 127, 127, 0.25); }
+.bt-gloss-form { display: flex; gap: 6px; padding: 4px 10px; }
+.bt-gloss-input {
+    flex: 1 1 0; min-width: 0; padding: 5px 7px; border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.10); color: #fff; font: inherit; font-size: 12px;
+}
+.bt-gloss-input::placeholder { color: rgba(255, 255, 255, 0.5); }
+.bt-gloss-add {
+    flex: 0 0 auto; padding: 5px 12px; border: 0; border-radius: 8px;
+    background: var(--bt-bilingual); color: #fff; font: inherit; font-size: 12px;
+    cursor: pointer;
+}
 .bt-menu-note { padding: 6px 10px; font-size: 11px; opacity: 0.65; }
 .bt-menu-warning { color: #ffdca8; opacity: 0.9; line-height: 1.35; }
 .bt-switch {
@@ -335,4 +375,34 @@ button.bt-menu-item:focus-visible { outline: 2px solid var(--bt-bilingual); }
 @keyframes btPulseStream {
     from { opacity: 0.85; }
     to { opacity: 1; }
+}
+
+/* ── Overlay style presets (plumbing for the bt-style-preset menu) ──
+   Applied via data-bt-preset on <html> (and data-preset on #bt-bar).
+   Default preset changes nothing; contrast/large only override tokens. */
+html[data-bt-preset="contrast"] {
+    --bt-tr-color: #003fa3;
+    --bt-tr-border: #003fa3;
+    --bt-bar-bg: rgba(0, 0, 0, 0.97);
+    --bt-bar-fg: #ffffff;
+    --bt-accent: #005fcc;
+    --bt-accent-2: #004aa3;
+}
+@media (prefers-color-scheme: dark) {
+    html[data-bt-preset="contrast"] { --bt-tr-color: #cfe4ff; --bt-tr-border: #cfe4ff; }
+}
+html[data-bt-preset="large"] #bt-bar { font-size: 16px; }
+html[data-bt-preset="large"] .bt-translation { line-height: 1.8; }
+
+/* ── Reduced motion ───────────────────────────────────────────────
+   Honor the OS-level preference: translations still render, but without
+   slide/spin/breathe/pulse animation. The .bt-translation final opacity
+   is restated so text is visible with animations disabled. */
+@media (prefers-reduced-motion: reduce) {
+    #bt-bar, #bt-bar *, #bt-menu, #bt-menu *, #bt-toast,
+    .bt-translation, .bt-translation *, .bt-loading {
+        animation: none !important;
+        transition: none !important;
+    }
+    .bt-translation { opacity: 0.95; }
 }

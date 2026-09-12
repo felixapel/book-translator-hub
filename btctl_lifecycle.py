@@ -38,10 +38,12 @@ from btctl_core import (
     ConfigError,
     DeploymentPlan,
     DeploymentState,
+    DockerProbeBase,
     InstallConfig,
     OperationLock,
     StateStore,
     ensure_directory_durable,
+    paths_overlap,
     read_private_text,
 )
 from btctl_unraid import (
@@ -59,19 +61,11 @@ _HISTORICAL_CA_LATEST_IMAGE = (
 )
 
 
-class LifecycleDocker(Protocol):
-    def require_available(self) -> None: ...
-    def inspect_container(self, name: str) -> dict | None: ...
-    def inspect_network(self, name: str) -> dict | None: ...
-    def inspect_image(self, name: str) -> dict | None: ...
+class LifecycleDocker(DockerProbeBase, Protocol):
     def remove_container(self, name: str) -> None: ...
     def remove_network(self, name: str) -> None: ...
     def stop_container(self, name: str) -> None: ...
     def start_container(self, name: str) -> None: ...
-    def wait_healthy(self, names: list[str], timeout_seconds: int) -> None: ...
-    def probe_http(self, container: str, url: str) -> None: ...
-    def probe_auth(self, container: str, url: str) -> None: ...
-    def probe_sqlite(self, container: str, database_path: str) -> None: ...
     def probe_providers(self, container: str) -> None: ...
     def probe_image_version(self, image_id: str, expected_version: str) -> None: ...
     def prepare_migration_source(self, image_id: str, path: Path) -> None: ...
@@ -551,6 +545,10 @@ class RuntimeUninstaller:
                 resource["stopped"] = True
                 store.save(current)
                 self.docker.remove_container(name)
+                if self.docker.inspect_container(name) is not None:
+                    raise InstallError(
+                        f"{role} container removal did not complete"
+                    )
             resource["removed"] = True
             store.save(current)
         if state.schema_version in {2, 3} and config.uses_reader_session:
@@ -572,6 +570,8 @@ class RuntimeUninstaller:
         private_name = str(private["name"])
         if self.docker.inspect_network(private_name) is not None:
             self.docker.remove_network(private_name)
+            if self.docker.inspect_network(private_name) is not None:
+                raise InstallError("private network removal did not complete")
         private["removed"] = True
         store.save(current)
 
@@ -811,9 +811,8 @@ def _secure_copy_atomic(source: Path, target: Path, work: Path) -> None:
 
 
 def _paths_overlap(first: Path, second: Path) -> bool:
-    left = first.resolve()
-    right = second.resolve()
-    return left == right or left in right.parents or right in left.parents
+    """Shared path-containment check; canonical logic lives in btctl_core."""
+    return paths_overlap(first, second)
 
 
 class LegacyUpgrade:

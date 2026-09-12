@@ -589,6 +589,338 @@ async function assertVisibleWorkInterruptsPrefetchDelay() {
     pacingDom.window.close();
 }
 
+async function assertTtsControls() {
+    // Source-level contract: speechSynthesis queue, stop/pause wiring and
+    // per-target-language voice selection must stay in the reader overlay.
+    assert(/const BT_TTS_LANG_CODES = \{/.test(code)
+        && /'Spanish': 'es-ES'/.test(code)
+        && /'Japanese': 'ja-JP'/.test(code)
+        && /'German': 'de-DE'/.test(code),
+    'TTS must map target languages to BCP-47 voice locales');
+    assert(/window\.speechSynthesis/.test(code)
+        && /\.cancel\(\)/.test(code)
+        && /speechSynthesis\.pause\(\)/.test(code)
+        && /speechSynthesis\.resume\(\)/.test(code)
+        && /\.speak\(utterance\)/.test(code),
+    'TTS must queue utterances and support stop/pause/resume');
+    assert(/utterance\.lang = code/.test(code)
+        && /utterance\.voice = voice/.test(code)
+        && /function ttsPickVoice\(langCode\)/.test(code),
+    'Every utterance must carry the target-language locale and matched voice');
+    assert(/id="bt-speak"/.test(code)
+        && /id="bt-stop"/.test(code)
+        && /aria-pressed/.test(code),
+    'The bar must expose speak/pause and stop controls');
+    assert(/function newGeneration\(\) \{[\s\S]{0,300}?ttsStop\(\)/.test(code),
+    'Page turns and language/mode changes must cancel queued speech');
+
+    // Behavioral contract with a mocked Web Speech API: translated
+    // paragraphs are queued in reading order with the target-language
+    // voice, then pause/resume/stop drive the platform controls.
+    const ttsDom = new JSDOM(
+        '<!DOCTYPE html><html><body><div id="viewer"><iframe></iframe></div></body></html>',
+        { url: 'http://reader.example.test/read/1', runScripts: 'dangerously' }
+    );
+    ttsDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api', authMode: 'cwa_session'
+    };
+    ttsDom.window.localStorage.setItem('bt_mode', 'translated');
+    ttsDom.window.localStorage.setItem('bt_prefetch', '0');
+    ttsDom.window.localStorage.setItem('bt_lang', 'Spanish');
+    ttsDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const ttsDoc = ttsDom.window.document.querySelector('iframe').contentDocument;
+    ttsDoc.body.innerHTML = '<p>uno</p><p>dos</p>';
+    ttsDoc.querySelectorAll('p').forEach(paragraph => {
+        paragraph.getBoundingClientRect = () => ({
+            width: 100, height: 20, left: 0, top: 0
+        });
+    });
+    const speechCalls = { speak: [], pause: 0, resume: 0, cancel: 0 };
+    ttsDom.window.SpeechSynthesisUtterance = function (text) {
+        this.text = text;
+        this.lang = '';
+        this.voice = null;
+        this.onend = null;
+        this.onerror = null;
+    };
+    ttsDom.window.speechSynthesis = {
+        speak: (utterance) => { speechCalls.speak.push(utterance); },
+        pause: () => { speechCalls.pause++; },
+        resume: () => { speechCalls.resume++; },
+        cancel: () => { speechCalls.cancel++; },
+        getVoices: () => ([
+            { name: 'Jorge', lang: 'es-ES' },
+            { name: 'Anna', lang: 'en-US' },
+        ]),
+    };
+    ttsDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) {
+            return {
+                ok: true, status: 200,
+                json: async () => ({
+                    primary: 'local', fallback: null,
+                    generation: '0123456789abcdef0123456789abcdef'
+                }),
+                headers: { get: () => null },
+            };
+        }
+        const payload = JSON.parse(options.body);
+        return {
+            ok: true, status: 200,
+            json: async () => ({
+                translations: payload.paragraphs.map(text => `ES: ${text}`)
+            }),
+            headers: { get: () => null },
+        };
+    };
+    const ttsScript = ttsDom.window.document.createElement('script');
+    ttsScript.textContent = code;
+    ttsDom.window.document.body.appendChild(ttsScript);
+    let deadline = Date.now() + 3000;
+    while (!Array.from(ttsDoc.querySelectorAll('p')).every(
+            paragraph => paragraph.textContent.startsWith('ES:'))
+            && Date.now() < deadline) await wait(20);
+    assert(Array.from(ttsDoc.querySelectorAll('p')).every(
+        paragraph => paragraph.textContent.startsWith('ES:')),
+    'TTS probe paragraphs must be translated before the speech check');
+
+    const speakBtn = ttsDom.window.document.getElementById('bt-speak');
+    const stopBtn = ttsDom.window.document.getElementById('bt-stop');
+    assert(speakBtn && stopBtn, 'TTS buttons must exist when speech is supported');
+    assert.strictEqual(speakBtn.style.display, '',
+        'TTS buttons must stay visible when speech is supported');
+    assert.strictEqual(stopBtn.disabled, true,
+        'Stop must be disabled before anything is spoken');
+
+    speakBtn.click();
+    assert.strictEqual(speechCalls.speak.length, 2,
+        'Speak must queue one utterance per translated paragraph');
+    assert.deepStrictEqual(
+        speechCalls.speak.map(utterance => utterance.text),
+        ['ES: uno', 'ES: dos'],
+        'The queue must read translated paragraphs in reading order');
+    for (const utterance of speechCalls.speak) {
+        assert.strictEqual(utterance.lang, 'es-ES',
+            'Utterances must carry the target-language locale');
+        assert.strictEqual(utterance.voice && utterance.voice.lang, 'es-ES',
+            'Utterances must use a voice matching the target language');
+    }
+    assert.strictEqual(speakBtn.textContent, '⏸',
+        'The speak button must become pause while speaking');
+    assert.strictEqual(speakBtn.getAttribute('aria-pressed'), 'true',
+        'The speak button must expose its pressed state');
+    assert.strictEqual(stopBtn.disabled, false,
+        'Stop must be enabled while speaking');
+
+    speakBtn.click();
+    assert.strictEqual(speechCalls.pause, 1, 'Second press must pause speech');
+    assert.strictEqual(speakBtn.textContent, '▶',
+        'The button must offer resume while paused');
+    speakBtn.click();
+    assert.strictEqual(speechCalls.resume, 1, 'Third press must resume speech');
+
+    stopBtn.click();
+    assert(speechCalls.cancel >= 1, 'Stop must cancel the platform queue');
+    assert.strictEqual(stopBtn.disabled, true,
+        'Stop must disable itself once speech is cancelled');
+    assert.strictEqual(speakBtn.textContent, '▶',
+        'The speak button must reset once speech is cancelled');
+    ttsDom.window.close();
+}
+
+async function assertFeedbackControls() {
+    // Source-level contract: per-paragraph thumbs must POST an opaque
+    // paragraph key plus rating to /feedback, never raw book text.
+    assert(/function attachFeedbackControls\(transEl, paraKey\)/.test(code)
+        && /`?\$\{TRANSLATOR_URL\}\/feedback`?/.test(code)
+        && /para_key: paraKey, rating,/.test(code),
+    'Feedback must POST the opaque paragraph key plus rating to /feedback');
+    assert(/\.bt-feedback/.test(code)
+        && /transEl\.after\(fb\)/.test(code),
+    'Feedback buttons must render as siblings so translation text stays exact');
+
+    // Behavioral contract: bilingual translations gain a feedback sibling
+    // whose vote posts the paragraph key; the translation text itself must
+    // stay exactly the translated string (regression: buttons used to live
+    // inside .bt-translation and polluted its textContent).
+    const fbDom = new JSDOM(`<!DOCTYPE html><html><body>
+      <main class="book-container">
+        <div class="book-content"><p id="fb-one">Feedback paragraph one.</p></div>
+      </main>
+    </body></html>`, {
+        url: 'https://kavita.example.test/library/7/series/42/book/99',
+        runScripts: 'dangerously'
+    });
+    fbDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api',
+        authMode: 'reader_session',
+        credentials: 'same-origin',
+        readerType: 'kavita',
+        readerVersion: '0.9.0.2',
+        readerContractVersion: 'kavita-0.9.0.2-epub-v1'
+    };
+    fbDom.window.localStorage.setItem('bt_mode', 'bilingual');
+    fbDom.window.localStorage.setItem('bt_prefetch', '0');
+    fbDom.window.localStorage.setItem('bt_lang', 'Spanish');
+    fbDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const feedbackPosts = [];
+    fbDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) {
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+                headers: { get: () => null }
+            };
+        }
+        if (String(url).endsWith('/feedback')) {
+            feedbackPosts.push(JSON.parse(options.body));
+            return { ok: true, status: 200, json: async () => ({}), headers: { get: () => null } };
+        }
+        const payload = JSON.parse(options.body);
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+                translations: payload.paragraphs.map(text => `ES: ${text}`)
+            }),
+            headers: { get: () => null }
+        };
+    };
+    const first = fbDom.window.document.getElementById('fb-one');
+    first.getBoundingClientRect = () => ({
+        width: 100, height: 20, left: 0, top: 0
+    });
+    const script = fbDom.window.document.createElement('script');
+    script.textContent = code;
+    fbDom.window.document.body.appendChild(script);
+    let deadline = Date.now() + 3000;
+    while (!first.querySelector('.bt-translation')
+            && Date.now() < deadline) await wait(20);
+    const transEl = first.querySelector('.bt-translation');
+    assert(transEl, 'Bilingual mode must render a translation node');
+    assert.strictEqual(transEl.textContent, 'ES: Feedback paragraph one.',
+        'Translation text must stay exactly the translated string');
+    const fb = transEl.nextElementSibling;
+    assert(fb && fb.classList.contains('bt-feedback'),
+        'A feedback control must follow the translation node');
+    const buttons = fb.querySelectorAll('.bt-fb-btn');
+    assert.strictEqual(buttons.length, 2,
+        'Feedback must offer exactly up and down votes');
+    assert(fb.dataset.paraKey && fb.dataset.paraKey.length > 0,
+        'Feedback must carry the opaque paragraph key');
+    assert(!/Feedback paragraph one/.test(fb.dataset.paraKey),
+        'The paragraph key must not contain raw book text');
+    buttons[0].click();
+    deadline = Date.now() + 2000;
+    while (feedbackPosts.length === 0 && Date.now() < deadline) await wait(20);
+    // The mock records the POST synchronously on fetch, but the pressed
+    // state lands in the response microtask — poll for it explicitly.
+    deadline = Date.now() + 2000;
+    while (buttons[0].getAttribute('aria-pressed') !== 'true'
+            && Date.now() < deadline) await wait(20);
+    assert.strictEqual(feedbackPosts.length, 1,
+        'Voting must POST one feedback record');
+    assert.strictEqual(feedbackPosts[0].para_key, fb.dataset.paraKey,
+        'The posted key must match the paragraph key');
+    assert.strictEqual(feedbackPosts[0].rating, 1,
+        'An up vote must post rating +1');
+    assert.strictEqual(feedbackPosts[0].book_id, '7:42',
+        'Feedback must carry the book scope');
+    assert.strictEqual(buttons[0].getAttribute('aria-pressed'), 'true',
+        'The voted button must expose its pressed state');
+    fbDom.window.close();
+}
+
+async function assertOfflineResilience() {
+    // Source-level contract. This overlay is injected into stock reader
+    // pages, so it must NEVER register a Service Worker (that would claim
+    // scope over the host reader origin). Offline resilience means gating
+    // our own pump on online/offline events instead.
+    assert(!/serviceWorker/.test(code)
+        && !/navigator\.serviceWorker\.register/.test(code),
+    'The overlay must never register a Service Worker on reader pages');
+    assert(/let isOffline = typeof navigator !== 'undefined' && navigator\.onLine === false/.test(code)
+        && /readerRouteActive && !isOffline/.test(code)
+        && /addEventListener\('offline'/.test(code)
+        && /addEventListener\('online'/.test(code),
+    'The pump must pause on offline and resume on online');
+
+    // Behavioral contract: boot offline -> zero translation fetches and an
+    // offline status; reconnect -> the pending paragraph translates.
+    const offDom = new JSDOM(`<!DOCTYPE html><html><body>
+      <main class="book-container">
+        <div class="book-content"><p id="off-one">Offline paragraph one.</p></div>
+      </main>
+    </body></html>`, {
+        url: 'https://kavita.example.test/library/7/series/42/book/99',
+        runScripts: 'dangerously'
+    });
+    Object.defineProperty(offDom.window.navigator, 'onLine', {
+        value: false, configurable: true
+    });
+    offDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api',
+        authMode: 'reader_session',
+        credentials: 'same-origin',
+        readerType: 'kavita',
+        readerVersion: '0.9.0.2',
+        readerContractVersion: 'kavita-0.9.0.2-epub-v1'
+    };
+    offDom.window.localStorage.setItem('bt_mode', 'bilingual');
+    offDom.window.localStorage.setItem('bt_prefetch', '0');
+    offDom.window.localStorage.setItem('bt_lang', 'Spanish');
+    offDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    let translationFetches = 0;
+    offDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) {
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+                headers: { get: () => null }
+            };
+        }
+        translationFetches += 1;
+        const payload = JSON.parse(options.body);
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+                translations: payload.paragraphs.map(text => `ES: ${text}`)
+            }),
+            headers: { get: () => null }
+        };
+    };
+    const first = offDom.window.document.getElementById('off-one');
+    first.getBoundingClientRect = () => ({
+        width: 100, height: 20, left: 0, top: 0
+    });
+    const script = offDom.window.document.createElement('script');
+    script.textContent = code;
+    offDom.window.document.body.appendChild(script);
+    await wait(400);
+    assert.strictEqual(translationFetches, 0,
+        'No translation fetch may issue while offline');
+    const statusText = offDom.window.document.getElementById('bt-status-text');
+    assert(statusText && /Offline/.test(statusText.textContent),
+        'The bar must show the offline state while disconnected');
+
+    Object.defineProperty(offDom.window.navigator, 'onLine', {
+        value: true, configurable: true
+    });
+    offDom.window.dispatchEvent(new offDom.window.Event('online'));
+    let deadline = Date.now() + 3000;
+    while (!first.querySelector('.bt-translation')
+            && Date.now() < deadline) await wait(20);
+    assert(first.querySelector('.bt-translation'),
+        'The pending paragraph must translate after reconnect');
+    assert.strictEqual(
+        first.querySelector('.bt-translation').textContent,
+        'ES: Offline paragraph one.');
+    offDom.window.close();
+}
+
 async function assertManagedLoaderContract() {
     const loaderDom = new JSDOM(
         '<!DOCTYPE html><html><head></head><body></body></html>',
@@ -1044,6 +1376,9 @@ async function runTest() {
     await assertConfiguredBatchSizeIsUsed();
     await assertSafe429RetryBoundSurvivesRediscovery();
     await assertVisibleWorkInterruptsPrefetchDelay();
+    await assertTtsControls();
+    await assertFeedbackControls();
+    await assertOfflineResilience();
 
     const [tokenTransport, forwardedTransport, cwaTransport, consentedTransport] = await Promise.all([
         captureAuthTransport({ authMode: 'token', apiToken: 'browser-token' }),

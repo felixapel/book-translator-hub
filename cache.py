@@ -449,6 +449,74 @@ class CacheStore:
         )
         return row[0]
 
+    def get_many(
+        self,
+        entries: list[tuple[str, str, str, CacheScope]],
+        *,
+        record_hit: bool = False,
+    ) -> list[str | None]:
+        """Fetch many translations with one connection and one query.
+
+        Results align with ``entries``. Identical (text, scope) pairs hash
+        once and share the row; expired rows are evicted lazily and read as
+        misses, matching :meth:`get`.
+        """
+        if not isinstance(entries, list):
+            raise ValueError("cache entries must be a list")
+        if not entries:
+            return []
+        memo: dict[tuple[str, str, str, CacheScope], str] = {}
+        keys: list[str] = []
+        for text, source_lang, target_lang, cache_scope in entries:
+            memo_key = (text, source_lang, target_lang, cache_scope)
+            key = memo.get(memo_key)
+            if key is None:
+                key = self.compute_key(
+                    text, source_lang, target_lang, cache_scope
+                )
+                memo[memo_key] = key
+            keys.append(key)
+        conn = self.connection()
+        cutoff = self._cutoff()
+        placeholders = ",".join("?" for _ in keys)
+        rows = conn.execute(
+            """SELECT cache_key, translated_text, created_at
+               FROM translations_v2
+               WHERE cache_key IN (%s)""" % placeholders,
+            tuple(keys),
+        ).fetchall()
+        by_key: dict[str, tuple[str, str]] = {}
+        for cache_key, translated_text, created_at in rows:
+            by_key.setdefault(cache_key, (translated_text, created_at))
+        expired = [
+            (cache_key, created_at)
+            for cache_key, (_, created_at) in by_key.items()
+            if created_at < cutoff
+        ]
+        if expired:
+            try:
+                conn.executemany(
+                    """DELETE FROM translations_v2
+                       WHERE cache_key = ? AND created_at = ?""",
+                    expired,
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            for cache_key, _ in expired:
+                del by_key[cache_key]
+        results: list[str | None] = []
+        for key in keys:
+            row = by_key.get(key)
+            if row is None:
+                results.append(None)
+                continue
+            if record_hit:
+                self._queue_hit(key)
+            results.append(row[0])
+        return results
+
     def record_hit(
         self,
         text: str,
@@ -773,6 +841,14 @@ def get_cached(
         _scope_for(model, scope, provider),
         record_hit=record_hit,
     )
+
+
+def get_cached_many(
+    entries: list[tuple[str, str, str, CacheScope]],
+    *,
+    record_hit: bool = False,
+) -> list[str | None]:
+    return _store().get_many(entries, record_hit=record_hit)
 
 
 def record_cache_hit(

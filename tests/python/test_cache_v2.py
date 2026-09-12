@@ -9,6 +9,7 @@ import stat
 import tempfile
 import unittest
 import warnings
+from unittest import mock
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -124,6 +125,35 @@ class CacheV2Tests(unittest.TestCase):
         self.clock.advance(days=31)
         self.assertIsNone(
             self.store.get("hello", "English", "Spanish", scope())
+        )
+        remaining = self.store.connection().execute(
+            "SELECT COUNT(*) FROM translations_v2"
+        ).fetchone()[0]
+        self.assertEqual(remaining, 0)
+
+    def test_get_many_aligns_results_and_hashes_duplicates_once(self) -> None:
+        self.store.put("hello", "English", "Spanish", "hola", scope())
+        self.store.put("bye", "English", "Spanish", "adiós", scope())
+        entries = [
+            ("hello", "English", "Spanish", scope()),
+            ("missing", "English", "Spanish", scope()),
+            ("hello", "English", "Spanish", scope()),
+            ("bye", "English", "Spanish", scope()),
+        ]
+        with mock.patch.object(
+            self.store, "compute_key", wraps=self.store.compute_key
+        ) as keys:
+            results = self.store.get_many(entries)
+        self.assertEqual(results, ["hola", None, "hola", "adiós"])
+        self.assertEqual(keys.call_count, 3)
+        self.assertEqual(self.store.get_many([]), [])
+
+    def test_get_many_reads_expired_rows_as_misses(self) -> None:
+        self.store.put("hello", "English", "Spanish", "hola", scope())
+        self.clock.advance(days=31)
+        self.assertEqual(
+            self.store.get_many([("hello", "English", "Spanish", scope())]),
+            [None],
         )
         remaining = self.store.connection().execute(
             "SELECT COUNT(*) FROM translations_v2"

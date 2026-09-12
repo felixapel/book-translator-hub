@@ -23,6 +23,11 @@ def budget() -> WorkBudget:
     )
 
 
+def all_cache_miss(entries, *, record_hit=False):
+    """Batch-probe stub: every entry misses, aligned with the request."""
+    return [None] * len(entries)
+
+
 class TranslationContractTests(unittest.TestCase):
     def test_groups_are_stable_over_empty_slots(self) -> None:
         self.assertEqual(
@@ -128,16 +133,19 @@ class ServerGroupCacheTests(unittest.TestCase):
         }
 
     def test_partial_group_hit_retranslates_the_whole_original_group(self) -> None:
-        def partial_hit(text, _source, _target, *, scope, record_hit):
+        def partial_hit(entries, *, record_hit):
             self.assertFalse(record_hit)
-            return "old-a" if text == "a" and scope.provider == "local" else None
+            return [
+                "old-a" if text == "a" and scope.provider == "local" else None
+                for text, _source, _target, scope in entries
+            ]
 
         fresh = [
             translator.BatchTranslationItem("new-a", "local", True, "direct"),
             translator.BatchTranslationItem("new-b", "local", True, "direct"),
         ]
         with (
-            mock.patch.object(server, "get_cached", side_effect=partial_hit),
+            mock.patch.object(server, "get_cached_many", side_effect=partial_hit),
             mock.patch.object(server, "put_cache_many") as put_cache_many,
             mock.patch.object(server, "translate_batch", return_value=fresh) as translate,
             mock.patch.object(
@@ -183,7 +191,7 @@ class ServerGroupCacheTests(unittest.TestCase):
             ),
         ]
         with (
-            mock.patch.object(server, "get_cached", return_value=None),
+            mock.patch.object(server, "get_cached_many", side_effect=all_cache_miss),
             mock.patch.object(server, "put_cache_many"),
             mock.patch.object(server, "translate_batch", return_value=fresh),
             mock.patch.object(
@@ -208,13 +216,15 @@ class ServerGroupCacheTests(unittest.TestCase):
     def test_complete_group_hit_avoids_provider_work(self) -> None:
         hits = {"a": "cached-a", "b": "cached-b"}
 
-        def complete_hit(text, _source, _target, *, scope, record_hit):
-            self.assertEqual(scope.provider, "local")
+        def complete_hit(entries, *, record_hit):
+            self.assertTrue(entries)
+            for _text, _source, _target, scope in entries:
+                self.assertEqual(scope.provider, "local")
             self.assertFalse(record_hit)
-            return hits[text]
+            return [hits[text] for text, _s, _t, _scope in entries]
 
         with (
-            mock.patch.object(server, "get_cached", side_effect=complete_hit),
+            mock.patch.object(server, "get_cached_many", side_effect=complete_hit),
             mock.patch.object(server, "translate_batch") as translate,
             mock.patch.object(server, "put_cache_many") as put_cache_many,
             mock.patch.object(server, "record_cache_hit") as record_hit,
@@ -252,7 +262,7 @@ class ServerGroupCacheTests(unittest.TestCase):
         ]
         with (
             mock.patch.object(translator, "BT_BATCH_SIZE", 2),
-            mock.patch.object(server, "get_cached", return_value=None),
+            mock.patch.object(server, "get_cached_many", side_effect=all_cache_miss),
             mock.patch.object(server, "put_cache_many") as put_cache_many,
             mock.patch.object(
                 server, "translate_batch", return_value=fresh
@@ -326,7 +336,7 @@ class ServerGroupCacheTests(unittest.TestCase):
                     translator, "_provider_post", side_effect=malformed_then_single
                 ),
                 mock.patch.object(translator, "BT_BATCH_SIZE", 3),
-                mock.patch.object(server, "get_cached", return_value=None),
+                mock.patch.object(server, "get_cached_many", side_effect=all_cache_miss),
                 mock.patch.object(server, "put_cache_many") as put_cache_many,
                 mock.patch.object(
                     server,

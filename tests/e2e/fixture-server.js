@@ -19,6 +19,35 @@ function sendFile(response, relativePath) {
     fs.createReadStream(filePath).pipe(response);
 }
 
+function sendJson(response, status, payload) {
+    response.writeHead(status, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+    });
+    response.end(JSON.stringify(payload));
+}
+
+function readJsonBody(request, response, handle) {
+    let raw = '';
+    request.on('data', chunk => {
+        raw += chunk;
+        if (raw.length > 65536) request.destroy();
+    });
+    request.on('end', () => {
+        let data = null;
+        try {
+            data = raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            data = null;
+        }
+        if (!data || typeof data !== 'object') {
+            sendJson(response, 400, { error: 'body must be a JSON object' });
+            return;
+        }
+        handle(data);
+    });
+}
+
 const server = http.createServer((request, response) => {
     const url = new URL(request.url, `http://127.0.0.1:${port}`);
 
@@ -44,6 +73,49 @@ const server = http.createServer((request, response) => {
             authMode: 'cwa_session',
             credentials: 'same-origin',
         }));
+        return;
+    }
+    if (url.pathname === '/bt-api/glossary') {
+        if (request.method === 'GET') {
+            sendJson(response, 200, { entries: [] });
+            return;
+        }
+        return readJsonBody(request, response, (data) => {
+            if (request.method === 'POST'
+                    && typeof data.source === 'string'
+                    && typeof data.target === 'string') {
+                sendJson(response, 200, {
+                    entry: { source: data.source, target: data.target },
+                });
+                return;
+            }
+            if (request.method === 'DELETE'
+                    && typeof data.source === 'string') {
+                sendJson(response, 200, { deleted: true });
+                return;
+            }
+            sendJson(response, 400, { error: 'bad glossary fixture call' });
+        });
+    }
+    if (url.pathname === '/bt-api/feedback') {
+        return readJsonBody(request, response, (data) => {
+            if (request.method === 'POST'
+                    && typeof data.para_key === 'string'
+                    && (data.rating === 1 || data.rating === -1
+                        || data.rating === 'up' || data.rating === 'down')) {
+                const rating = data.rating === 'down' || data.rating === -1 ? -1 : 1;
+                sendJson(response, 200, {
+                    feedback: { para_key: data.para_key, rating },
+                });
+                return;
+            }
+            sendJson(response, 400, { error: 'bad feedback fixture call' });
+        });
+    }
+    if (url.pathname === '/bt-api/feedback/summary') {
+        sendJson(response, 200, {
+            summary: { up: 0, down: 0, total: 0, score: 0 },
+        });
         return;
     }
     if (url.pathname === '/bt-api/provider-policy') {

@@ -24,6 +24,7 @@ services:
         target: /app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    user: "101:102"
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=128m,uid=101,gid=102,mode=700

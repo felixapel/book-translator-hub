@@ -5,7 +5,7 @@
 (function () {
     'use strict';
     // ── Version & Telemetry ──────────────────────────────────────────
-    const BT_UI_VERSION = '2.3.2';
+    const BT_UI_VERSION = '2.3.3';
     console.log(`[BookTranslator] loaded version ${BT_UI_VERSION}`);
     const cfg = (typeof window !== 'undefined' && window.BOOK_TRANSLATOR) || {};
     function boundedInteger(value, minimum, maximum, fallback) {
@@ -41,7 +41,45 @@
     const TRANSLATOR_URL = (cfg.apiUrl && cfg.apiUrl.length)
         ? cfg.apiUrl
         : (window.location.protocol === 'https:' ? null : `http://${window.location.hostname}:8390`);
-    let SOURCE_LANG = localStorage.getItem('bt_source_lang') || cfg.sourceLang || 'English';
+    // ── Per-book preferences (additive) ──────────────────────────────
+    // Mode and languages are remembered per book and fall back to the
+    // pre-existing global keys, which stay the default for new books and
+    // keep older stored values working. Every write below updates the
+    // global key first (unchanged contract) and then the per-book key.
+    function bookScopeId() {
+        try { return currentBookId(); } catch (e) { return 'unscoped'; }
+    }
+    function bookPrefGet(name) {
+        try {
+            const scoped = localStorage.getItem('bt_book_' + bookScopeId() + '_' + name);
+            if (scoped !== null && scoped !== undefined) return scoped;
+        } catch (e) { /* storage may be unavailable */ }
+        try { return localStorage.getItem(name); } catch (e) { return null; }
+    }
+    function bookPrefRemember(name, value) {
+        try { localStorage.setItem('bt_book_' + bookScopeId() + '_' + name, value); }
+        catch (e) { /* storage may be unavailable */ }
+    }
+
+    // ── Overlay style preset (additive plumbing) ─────────────────────
+    // One of default/contrast/large. Stored globally, applied as a data
+    // attribute the stylesheet themes off; unknown values reset to default.
+    const STYLE_PRESETS = ['default', 'contrast', 'large'];
+    let stylePreset = 'default';
+    try {
+        const storedPreset = localStorage.getItem('bt_style_preset');
+        if (STYLE_PRESETS.indexOf(storedPreset) !== -1) stylePreset = storedPreset;
+    } catch (e) { /* storage may be unavailable */ }
+    function setStylePreset(preset) {
+        if (STYLE_PRESETS.indexOf(preset) === -1) preset = 'default';
+        stylePreset = preset;
+        try { localStorage.setItem('bt_style_preset', preset); } catch (e) {}
+        try { document.documentElement.dataset.btPreset = preset; } catch (e) {}
+        const presetBar = document.getElementById('bt-bar');
+        if (presetBar) presetBar.dataset.preset = preset;
+    }
+
+    let SOURCE_LANG = bookPrefGet('bt_source_lang') || cfg.sourceLang || 'English';
 
     // Map browser language codes to the full language name the backend expects
     // (used only to pick a sensible default target on first run).
@@ -63,19 +101,27 @@
 
     const browserCode = (navigator.language || 'es').split('-')[0];
     const defaultLang = langMap[browserCode] || 'Spanish';
-    let TARGET_LANG = localStorage.getItem('bt_lang') || cfg.targetLang || defaultLang;
+    let TARGET_LANG = bookPrefGet('bt_lang') || cfg.targetLang || defaultLang;
 
     const BT_CLIENT_MAX_INFLIGHT = 1;
     const BT_CLIENT_RATE_LIMIT_BACKOFF_MS = 10000;
     const BT_CLIENT_MAX_RATE_LIMIT_RESPONSES = 3;
     const BT_CLIENT_MAX_RETRY_AFTER_SECONDS = 60;
 
-    let translationMode = localStorage.getItem('bt_mode') || 'off'; // 'off', 'bilingual', 'translated'
+    let translationMode = bookPrefGet('bt_mode') || 'off'; // 'off', 'bilingual', 'translated'
     let isTranslating = false;
     let isPrefetching = false;
     let visibleQueue = [];
     let prefetchQueue = [];
     let isPumpRunning = false;
+    // Offline-first: while true the pump issues no network work. Queues and
+    // persisted translations stay intact, so already-translated content
+    // keeps rendering and pending work resumes on 'online'.
+    // NOTE: deliberately no Service Worker. This overlay is injected into
+    // stock reader pages — a SW registered here would claim scope over the
+    // host reader origin and intercept reader traffic. Offline resilience
+    // therefore means gating our own pump, not owning the network layer.
+    let isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
     let rateLimitUntil = 0;
     let nextPrefetchAt = 0;
     let prefetchWaitWake = null;
@@ -243,6 +289,8 @@
 
     function newGeneration() {
         generation++;
+        // A chapter/page/language/mode turn invalidates queued speech too.
+        try { ttsStop(); } catch (e) { /* speech may be unavailable */ }
         rateLimitResponses.clear();
         if (prefetchWaitWake) prefetchWaitWake();
         for (const c of activeControllers) {
@@ -318,6 +366,25 @@
             cloudSecondaryPrivacy: 'The primary provider is already remote. This additionally permits the configured remote fallback for this tab.',
             barPos: 'Position', posTop: 'Top', posBottom: 'Bottom', posReset: 'Reset to bottom', posDragHint: 'Touch or drag the bar anywhere to move it.',
             dbgQueue: 'Queue', dbgGen: 'Generation', dbgTrigger: 'Last trigger',
+            stylePreset: 'Text style', presetDefault: 'Default', presetContrast: 'High contrast', presetLarge: 'Large text',
+            glossary: 'Glossary', glossaryAdd: 'Add', glossarySource: 'Term', glossaryTarget: 'Translation',
+            glossaryEmpty: 'No glossary terms for this book yet.',
+            glossaryHint: 'Exact terms always translated the same way in this book.',
+            glossaryDelete: 'Remove term',
+            exportEpub: 'Export translated EPUB',
+            exportEmpty: 'Nothing translated yet — nothing to export.',
+            exportFailed: 'EPUB export failed.',
+            exportDone: 'EPUB downloaded.',
+            ttsSpeak: 'Listen',
+            ttsPause: 'Pause',
+            ttsResume: 'Resume',
+            ttsStop: 'Stop',
+            ttsEmpty: 'Nothing to read yet.',
+            ttsUnsupported: 'Speech is not supported in this browser.',
+            fbUp: 'Good translation',
+            fbDown: 'Bad translation',
+            fbThanks: 'Thanks for the feedback.',
+            offline: 'Offline — resumes on reconnect',
         },
         es: {
             off: 'Original', bilingual: 'Bilingüe', translated: 'Traducido',
@@ -336,27 +403,68 @@
             cloudSecondaryPrivacy: 'El proveedor primario ya es remoto. Esto además permite el fallback remoto configurado durante esta pestaña.',
             barPos: 'Posición', posTop: 'Arriba', posBottom: 'Abajo', posReset: 'Restablecer abajo', posDragHint: 'Arrastra la barra para moverla libremente.',
             dbgQueue: 'Cola', dbgGen: 'Generación', dbgTrigger: 'Último disparo',
+            restoring: 'Restaurando traducciones guardadas…',
+            stylePreset: 'Estilo de texto', presetDefault: 'Predeterminado', presetContrast: 'Alto contraste', presetLarge: 'Texto grande',
         },
         fr: {
             off: 'Original', bilingual: 'Bilingue', translated: 'Traduit',
             translatingPage: 'Traduction…', translatingChapter: 'Chapitre', done: '✓ Terminé', error: '⚠ Réessayer',
-            cycleHint: 'Cliquez pour changer : Original → Bilingue → Traduit', langHint: 'Langue cible', topLanguages: 'Les plus parlées', allLanguages: 'Toutes les langues (A–Z)', settings: 'Réglages',
+            rateLimited: 'Attente {n}s…',
+            retrying: 'Nouvelle tentative…',
+            restoring: 'Restauration des traductions enregistrées…',
+            cycleHint: 'Cliquez pour changer : Original → Bilingue → Traduit', langHint: 'Langue cible', sourceLangHint: 'Langue source', topLanguages: 'Les plus parlées', allLanguages: 'Toutes les langues (A–Z)', settings: 'Réglages',
             prefetchWhole: 'Pré-traduire tout le chapitre', clearLang: 'Vider le cache de cette langue', clearAll: 'Vider tout le cache',
             cached: 'En cache', cleared: 'Cache vidé',
+            bookTranslator: 'Traducteur de livres', modeLabel: 'Mode', sourceLabel: 'Source', targetLabel: 'Cible', langLabel: 'Langue',
+            retryPage: 'Réessayer la page actuelle', debug: 'Débogage',
+            cloudFallback: 'Autoriser le fallback cloud',
+            cloudPrivacy: 'Envoie le texte du livre au fournisseur distant configuré. Ce choix n’est pas enregistré et s’applique uniquement à cet onglet du livre.',
+            cloudActive: 'Traduction cloud active : le texte du livre est envoyé au fournisseur distant principal configuré.',
+            cloudSecondary: 'Autoriser le fallback distant secondaire',
+            cloudSecondaryPrivacy: 'Le fournisseur principal est déjà distant. Cela autorise en plus le fallback distant configuré pendant cet onglet.',
+            barPos: 'Position', posTop: 'Haut', posBottom: 'Bas', posReset: 'Réinitialiser en bas', posDragHint: 'Touchez ou faites glisser la barre pour la déplacer.',
+            dbgQueue: 'File', dbgGen: 'Génération', dbgTrigger: 'Dernier déclenchement',
+            stylePreset: 'Style de texte', presetDefault: 'Par défaut', presetContrast: 'Contraste élevé', presetLarge: 'Grand texte',
         },
         de: {
             off: 'Original', bilingual: 'Zweisprachig', translated: 'Übersetzt',
             translatingPage: 'Übersetzen…', translatingChapter: 'Kapitel', done: '✓ Fertig', error: '⚠ Erneut',
-            cycleHint: 'Klicken zum Wechseln: Original → Zweisprachig → Übersetzt', langHint: 'Zielsprache', topLanguages: 'Meistgesprochen', allLanguages: 'Alle Sprachen (A–Z)', settings: 'Einstellungen',
+            rateLimited: 'Warten {n}s…',
+            retrying: 'Wiederholen…',
+            restoring: 'Gespeicherte Übersetzungen werden wiederhergestellt…',
+            cycleHint: 'Klicken zum Wechseln: Original → Zweisprachig → Übersetzt', langHint: 'Zielsprache', sourceLangHint: 'Ausgangssprache', topLanguages: 'Meistgesprochen', allLanguages: 'Alle Sprachen (A–Z)', settings: 'Einstellungen',
             prefetchWhole: 'Ganzes Kapitel vorübersetzen', clearLang: 'Cache dieser Sprache leeren', clearAll: 'Gesamten Cache leeren',
             cached: 'Im Cache', cleared: 'Cache geleert',
+            bookTranslator: 'Buchübersetzer', modeLabel: 'Modus', sourceLabel: 'Quelle', targetLabel: 'Ziel', langLabel: 'Sprache',
+            retryPage: 'Aktuelle Seite erneut versuchen', debug: 'Debug',
+            cloudFallback: 'Cloud-Fallback erlauben',
+            cloudPrivacy: 'Sendet Buchtext an den konfigurierten Remote-Anbieter. Diese Auswahl wird nicht gespeichert und gilt nur für diesen Buch-Tab.',
+            cloudActive: 'Cloud-Übersetzung ist aktiv: Buchtext wird an den konfigurierten primären Remote-Anbieter gesendet.',
+            cloudSecondary: 'Sekundären Remote-Fallback erlauben',
+            cloudSecondaryPrivacy: 'Der primäre Anbieter ist bereits remote. Dies erlaubt zusätzlich den konfigurierten Remote-Fallback für diesen Tab.',
+            barPos: 'Position', posTop: 'Oben', posBottom: 'Unten', posReset: 'Nach unten zurücksetzen', posDragHint: 'Leiste berühren oder ziehen, um sie zu verschieben.',
+            dbgQueue: 'Warteschlange', dbgGen: 'Generation', dbgTrigger: 'Letzter Auslöser',
+            stylePreset: 'Textstil', presetDefault: 'Standard', presetContrast: 'Hoher Kontrast', presetLarge: 'Großer Text',
         },
         pt: {
             off: 'Original', bilingual: 'Bilíngue', translated: 'Traduzido',
             translatingPage: 'Traduzindo…', translatingChapter: 'Capítulo', done: '✓ Pronto', error: '⚠ Repetir',
-            cycleHint: 'Clique para alternar: Original → Bilíngue → Traduzido', langHint: 'Idioma de destino', topLanguages: 'Mais falados', allLanguages: 'Todos os idiomas (A–Z)', settings: 'Ajustes',
+            rateLimited: 'Aguardando {n}s…',
+            retrying: 'Tentando novamente…',
+            restoring: 'Restaurando traduções salvas…',
+            cycleHint: 'Clique para alternar: Original → Bilíngue → Traduzido', langHint: 'Idioma de destino', sourceLangHint: 'Idioma de origem', topLanguages: 'Mais falados', allLanguages: 'Todos os idiomas (A–Z)', settings: 'Ajustes',
             prefetchWhole: 'Pré-traduzir capítulo inteiro', clearLang: 'Limpar cache deste idioma', clearAll: 'Limpar todo o cache',
             cached: 'Em cache', cleared: 'Cache limpo',
+            bookTranslator: 'Tradutor de livros', modeLabel: 'Modo', sourceLabel: 'Origem', targetLabel: 'Destino', langLabel: 'Idioma',
+            retryPage: 'Repetir página atual', debug: 'Depuração',
+            cloudFallback: 'Permitir fallback cloud',
+            cloudPrivacy: 'Envia o texto do livro ao provedor remoto configurado. Esta escolha não é salva e aplica-se apenas a esta aba do livro.',
+            cloudActive: 'Tradução cloud ativa: o texto do livro é enviado ao provedor remoto principal configurado.',
+            cloudSecondary: 'Permitir fallback remoto secundário',
+            cloudSecondaryPrivacy: 'O provedor principal já é remoto. Isto permite adicionalmente o fallback remoto configurado durante esta aba.',
+            barPos: 'Posição', posTop: 'Topo', posBottom: 'Base', posReset: 'Repor na base', posDragHint: 'Toque ou arraste a barra para movê-la.',
+            dbgQueue: 'Fila', dbgGen: 'Geração', dbgTrigger: 'Último disparo',
+            stylePreset: 'Estilo de texto', presetDefault: 'Padrão', presetContrast: 'Alto contraste', presetLarge: 'Texto grande',
         },
     };
     // English is the base; the locale (if any) overrides it, so menu-only keys
@@ -503,6 +611,7 @@
         if (mode === prevMode) return;
         translationMode = mode;
         localStorage.setItem('bt_mode', mode);
+        bookPrefRemember('bt_mode', mode);
 
         const bar = document.getElementById('bt-bar');
         if (bar) bar.dataset.mode = mode;
@@ -667,6 +776,8 @@
         bar.dataset.state = 'idle';
         bar.setAttribute('role', 'toolbar');
         bar.setAttribute('aria-label', t.bookTranslator);
+        bar.setAttribute('dir', 'auto');
+        bar.dataset.preset = stylePreset;
 
         // Build the language <option> list once: top-10 most spoken first,
         // then every other supported language A-Z.
@@ -688,6 +799,8 @@
                 `<span id="bt-status-text"></span>` +
             `</div>` +
             `<button type="button" id="bt-gear" title="${t.settings}" aria-label="${t.settings}" aria-haspopup="dialog" aria-controls="bt-menu" aria-expanded="false">⚙</button>` +
+            `<button type="button" id="bt-speak" title="${t.ttsSpeak}" aria-label="${t.ttsSpeak}" aria-pressed="false">▶</button>` +
+            `<button type="button" id="bt-stop" title="${t.ttsStop}" aria-label="${t.ttsStop}" disabled>■</button>` +
             `<div id="bt-progress" role="progressbar" aria-label="${t.translatingChapter}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="bt-progress-fill"></div></div>`;
 
         document.body.appendChild(bar);
@@ -706,7 +819,9 @@
         menu.setAttribute('aria-label', t.settings);
         menu.setAttribute('aria-hidden', 'true');
         menu.setAttribute('tabindex', '-1');
+        menu.setAttribute('dir', 'auto');
         document.body.appendChild(menu);
+        setStylePreset(stylePreset);
 
         document.getElementById('bt-toggle').onclick = () => {
             if (hasMovedDuringDrag) { hasMovedDuringDrag = false; return; }
@@ -720,6 +835,7 @@
             persistCacheNow();            // flush current language's cache before switching
             TARGET_LANG = e.target.value;
             localStorage.setItem('bt_lang', TARGET_LANG);
+            bookPrefRemember('bt_lang', TARGET_LANG);
             newGeneration();              // abort in-flight old-language requests
             translatedParagraphs = loadCacheForLang(TARGET_LANG); // restore that language's work
             if (translationMode !== 'off') {
@@ -731,6 +847,27 @@
 
         const gear = document.getElementById('bt-gear');
         gear.onclick = (e) => { e.stopPropagation(); toggleMenu(); };
+
+        // Text-to-speech controls: speak queues the chapter paragraphs,
+        // the same button pauses/resumes while speaking, stop cancels.
+        // Hidden where the Web Speech API is unavailable.
+        const speakBtn = document.getElementById('bt-speak');
+        const stopBtn = document.getElementById('bt-stop');
+        if (!ttsSupported()) {
+            if (speakBtn) speakBtn.style.display = 'none';
+            if (stopBtn) stopBtn.style.display = 'none';
+        } else {
+            if (speakBtn) {
+                speakBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    if (ttsSpeaking) ttsPauseResume();
+                    else ttsSpeakAll();
+                };
+            }
+            if (stopBtn) {
+                stopBtn.onclick = (e) => { e.stopPropagation(); ttsStop(); };
+            }
+        }
         // Close on outside click (anywhere not on the bar or the menu)...
         document.addEventListener('click', (e) => {
             if (menu.classList.contains('bt-open') && !bar.contains(e.target) && !menu.contains(e.target)) {
@@ -769,6 +906,12 @@
         const entryCount = Object.keys(translatedParagraphs).length;
         const modeLabel = t[translationMode] || translationMode;
         const esc = (s) => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+        const escAttr = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const glossaryListHtml = glossaryEntries.length
+            ? glossaryEntries.map((entry) =>
+                `<div class="bt-gloss-row"><span class="bt-gloss-terms">${esc(entry.source)} → ${esc(entry.target)}</span>` +
+                `<button type="button" class="bt-gloss-del" data-source="${escAttr(entry.source)}" title="${escAttr(t.glossaryDelete)}" aria-label="${escAttr(t.glossaryDelete)}">×</button></div>`).join('')
+            : `<div class="bt-menu-note">${t.glossaryEmpty}</div>`;
         let privacyControls = '';
         if (providerPolicyState && providerPolicyState.primary === 'remote') {
             privacyControls +=
@@ -803,6 +946,12 @@
                 `<select id="bt-source-lang" class="bt-menu-select" title="${t.sourceLangHint}" aria-label="${t.sourceLangHint}">` +
                     `${languageOptions(SOURCE_LANG)}</select></label>` +
             `<div class="bt-menu-row"><span>${t.targetLabel}</span><span class="bt-menu-val">${esc(TARGET_LANG)}</span></div>` +
+            `<label class="bt-menu-field" for="bt-style-preset"><span>${t.stylePreset}</span>` +
+                `<select id="bt-style-preset" class="bt-menu-select" aria-label="${t.stylePreset}">` +
+                    `<option value="default"${stylePreset === 'default' ? ' selected' : ''}>${t.presetDefault}</option>` +
+                    `<option value="contrast"${stylePreset === 'contrast' ? ' selected' : ''}>${t.presetContrast}</option>` +
+                    `<option value="large"${stylePreset === 'large' ? ' selected' : ''}>${t.presetLarge}</option>` +
+                `</select></label>` +
             `<div class="bt-menu-row"><span>${t.barPos || 'Posición'}</span><span class="bt-menu-val">${posLabel}</span></div>` +
             `<div class="bt-menu-sep"></div>` +
             `<button type="button" class="bt-menu-item" data-action="toggle-pos">` +
@@ -818,18 +967,54 @@
             `</button>` +
             privacyControls +
             `<button type="button" class="bt-menu-item" data-action="retry"><span>↻ ${t.retryPage}</span></button>` +
+            `<button type="button" class="bt-menu-item" data-action="export-epub"><span>⤓ ${t.exportEpub}</span></button>` +
             `<button type="button" class="bt-menu-item" data-action="clear-lang"><span>${t.clearLang}</span></button>` +
             `<button type="button" class="bt-menu-item" data-action="clear-all"><span>${t.clearAll}</span></button>` +
+            `<div class="bt-menu-sep"></div>` +
+            `<div class="bt-menu-row"><span>${t.glossary}</span><span class="bt-menu-val">${glossaryEntries.length}</span></div>` +
+            `<div id="bt-gloss-list">${glossaryListHtml}</div>` +
+            `<form id="bt-gloss-form" class="bt-gloss-form">` +
+                `<input id="bt-gloss-source" class="bt-gloss-input" maxlength="200" placeholder="${escAttr(t.glossarySource)}" aria-label="${escAttr(t.glossarySource)}" autocomplete="off">` +
+                `<input id="bt-gloss-target" class="bt-gloss-input" maxlength="200" placeholder="${escAttr(t.glossaryTarget)}" aria-label="${escAttr(t.glossaryTarget)}" autocomplete="off">` +
+                `<button type="submit" class="bt-gloss-add">${t.glossaryAdd}</button>` +
+            `</form>` +
+            `<div class="bt-menu-note">${t.glossaryHint}</div>` +
             `<div class="bt-menu-sep"></div>` +
             `<div class="bt-menu-note">💡 ${t.posDragHint || 'Arrastra la barra para moverla libremente.'}</div>` +
             `<div class="bt-menu-note">${t.cached}: ${entryCount} · ${esc(TARGET_LANG)}</div>` +
             `<div class="bt-menu-note">${t.debug}: ${t.dbgQueue} ${prefetchQueue.length} · ${t.dbgGen} ${generation} · ${t.dbgTrigger} ${esc(lastTriggerReason)}</div>`;
+
+        const presetSelect = menu.querySelector('#bt-style-preset');
+        if (presetSelect) {
+            presetSelect.onchange = (event) => {
+                setStylePreset(event.target.value);
+                buildMenu();
+            };
+        }
+
+        const glossForm = menu.querySelector('#bt-gloss-form');
+        if (glossForm) {
+            glossForm.onsubmit = (event) => {
+                event.preventDefault();
+                const source = menu.querySelector('#bt-gloss-source').value.trim();
+                const target = menu.querySelector('#bt-gloss-target').value.trim();
+                if (!source || !target) return;
+                saveGlossaryTerm(source, target).then(() => buildMenu());
+            };
+        }
+        menu.querySelectorAll('.bt-gloss-del').forEach((btn) => {
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                deleteGlossaryTerm(btn.dataset.source).then(() => buildMenu());
+            };
+        });
 
         const sourceSelect = menu.querySelector('#bt-source-lang');
         sourceSelect.onchange = (event) => {
             persistCacheNow();
             SOURCE_LANG = event.target.value;
             localStorage.setItem('bt_source_lang', SOURCE_LANG);
+            bookPrefRemember('bt_source_lang', SOURCE_LANG);
             newGeneration();
             translatedParagraphs = loadCacheForLang(TARGET_LANG);
             removeAllTranslations();
@@ -865,6 +1050,9 @@
                     failedParagraphs.clear();
                     closeMenu();
                     if (translationMode !== 'off') scheduleTranslate('manual_retry', { immediate: true, forceRediscover: true });
+                } else if (action === 'export-epub') {
+                    closeMenu({ restoreFocus: false });
+                    exportTranslatedEpub();
                 } else if (action === 'clear-lang') {
                     translatedParagraphs = {};
                     failedParagraphs.clear();
@@ -909,6 +1097,15 @@
         menu.classList.toggle('bt-open');
         if (menu.classList.contains('bt-open')) updateMenuPosition();
         const isOpen = menu.classList.contains('bt-open');
+        if (isOpen) {
+            // Lazy glossary load: only on explicit menu open, never during
+            // background menu rebuilds, so no fetch fires unless the user
+            // opens settings. Rebuilds only when entries actually changed.
+            const glossBefore = glossaryEntries;
+            loadGlossary().then(() => {
+                if (glossaryEntries !== glossBefore) buildMenu();
+            });
+        }
         menu.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
         const gear = document.getElementById('bt-gear');
         if (gear) gear.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
@@ -936,7 +1133,10 @@
         let progressValue = 0;
         if (translationMode !== 'off') {
             const now = Date.now();
-            if (rateLimitUntil > now) {
+            if (isOffline) {
+                state = 'offline';
+                text.textContent = t.offline;
+            } else if (rateLimitUntil > now) {
                 state = 'ratelimit';
                 const left = Math.ceil((rateLimitUntil - now) / 1000);
                 text.textContent = (t.rateLimited || strings.en.rateLimited).replace('{n}', left);
@@ -1011,12 +1211,155 @@
         if (!toast) {
             toast = document.createElement('div');
             toast.id = 'bt-toast';
+            toast.setAttribute('dir', 'auto');
             document.body.appendChild(toast);
         }
         toast.textContent = message;
         requestAnimationFrame(() => toast.classList.add('bt-toast-visible'));
         clearTimeout(toast._btHide);
         toast._btHide = setTimeout(() => toast.classList.remove('bt-toast-visible'), 2600);
+    }
+
+    // ── Text-to-Speech (Web Speech API) ────────────────────────────────
+    // Reads the chapter paragraphs aloud in reading order through the
+    // browser speechSynthesis queue. Translated text is preferred; the
+    // original is the fallback until its translation arrives. Every queued
+    // item carries its own language so the utterance voice matches the
+    // spoken text (target language for translations, source otherwise).
+    const BT_TTS_LANG_CODES = {
+        'English': 'en-US', 'Chinese': 'zh-CN', 'Chinese (Traditional)': 'zh-TW',
+        'Hindi': 'hi-IN', 'Spanish': 'es-ES', 'French': 'fr-FR', 'Arabic': 'ar-SA',
+        'Bengali': 'bn-BD', 'Portuguese': 'pt-PT', 'Russian': 'ru-RU', 'Urdu': 'ur-PK',
+        'Afrikaans': 'af-ZA', 'Albanian': 'sq-AL', 'Amharic': 'am-ET', 'Aymara': 'ay-BO',
+        'Basque': 'eu-ES', 'Bosnian': 'bs-BA', 'Bulgarian': 'bg-BG', 'Burmese': 'my-MM',
+        'Catalan': 'ca-ES', 'Cebuano': 'ceb-PH', 'Chewa': 'ny-MW', 'Croatian': 'hr-HR',
+        'Czech': 'cs-CZ', 'Danish': 'da-DK', 'Dutch': 'nl-NL', 'Esperanto': 'eo',
+        'Estonian': 'et-EE', 'Finnish': 'fi-FI', 'Gaelic': 'gd-GB', 'Galician': 'gl-ES',
+        'Ganda': 'lg-UG', 'German': 'de-DE', 'Greek': 'el-GR', 'Guarani': 'gn-PY',
+        'Gujarati': 'gu-IN', 'Hausa': 'ha-NG', 'Hawaiian': 'haw-US', 'Hebrew': 'he-IL',
+        'Hungarian': 'hu-HU', 'Icelandic': 'is-IS', 'Igbo': 'ig-NG', 'Indonesian': 'id-ID',
+        'Italian': 'it-IT', 'Japanese': 'ja-JP', 'Javanese': 'jv-ID', 'Kannada': 'kn-IN',
+        'Kazakh': 'kk-KZ', 'Khmer': 'km-KH', 'Korean': 'ko-KR', 'Kyrgyz': 'ky-KG',
+        'Lao': 'lo-LA', 'Latin': 'la', 'Latvian': 'lv-LV', 'Lingala': 'ln-CD',
+        'Lithuanian': 'lt-LT', 'Macedonian': 'mk-MK', 'Maithili': 'mai-IN', 'Malagasy': 'mg-MG',
+        'Malay': 'ms-MY', 'Malayalam': 'ml-IN', 'Maori': 'mi-NZ', 'Marathi': 'mr-IN',
+        'Mongolian': 'mn-MN', 'Nahuatl': 'nah-MX', 'Navajo': 'nv-US', 'Nepali': 'ne-NP',
+        'Norwegian': 'nb-NO', 'Odia': 'or-IN', 'Oromo': 'om-ET', 'Pashto': 'ps-AF',
+        'Persian': 'fa-IR', 'Polish': 'pl-PL', 'Punjabi': 'pa-IN', 'Quechua': 'qu-PE',
+        'Romanian': 'ro-RO', 'Samoan': 'sm-WS', 'Serbian': 'sr-RS', 'Shona': 'sn-ZW',
+        'Sindhi': 'sd-PK', 'Sinhala': 'si-LK', 'Slovak': 'sk-SK', 'Slovenian': 'sl-SI',
+        'Somali': 'so-SO', 'Sundanese': 'su-ID', 'Swahili': 'sw-KE', 'Swedish': 'sv-SE',
+        'Tagalog': 'tl-PH', 'Tajik': 'tg-TJ', 'Tamil': 'ta-IN', 'Telugu': 'te-IN',
+        'Thai': 'th-TH', 'Tibetan': 'bo-CN', 'Turkish': 'tr-TR', 'Turkmen': 'tk-TM',
+        'Ukrainian': 'uk-UA', 'Uzbek': 'uz-UZ', 'Vietnamese': 'vi-VN', 'Welsh': 'cy-GB',
+        'Xhosa': 'xh-ZA', 'Yoruba': 'yo-NG', 'Zulu': 'zu-ZA'
+    };
+
+    let ttsSpeaking = false;
+    let ttsPaused = false;
+
+    function ttsSupported() {
+        try {
+            return typeof window !== 'undefined'
+                && !!window.speechSynthesis && !!window.SpeechSynthesisUtterance;
+        } catch (e) { return false; }
+    }
+
+    function ttsLangCodeFor(languageName) {
+        if (Object.prototype.hasOwnProperty.call(BT_TTS_LANG_CODES, languageName)) {
+            return BT_TTS_LANG_CODES[languageName];
+        }
+        return 'en-US';
+    }
+
+    function ttsPickVoice(langCode) {
+        try {
+            const synth = window.speechSynthesis;
+            if (!synth || typeof synth.getVoices !== 'function') return null;
+            const voices = synth.getVoices() || [];
+            const wanted = String(langCode).toLowerCase();
+            const prefix = wanted.split('-')[0];
+            return voices.find(v => String(v.lang || '').toLowerCase() === wanted)
+                || voices.find(v => String(v.lang || '').toLowerCase().split('-')[0] === prefix)
+                || null;
+        } catch (e) { return null; }
+    }
+
+    function ttsCollectTexts() {
+        const items = [];
+        for (const el of getParagraphs()) {
+            const original = getParagraphText(el);
+            if (!original) continue;
+            const hash = cacheKeyForText(original, elementContextId(el));
+            const translated = translatedParagraphs[hash];
+            if (!isBadTranslation(translated) && translated) {
+                items.push({ text: translated, lang: TARGET_LANG });
+            } else {
+                items.push({ text: original, lang: SOURCE_LANG });
+            }
+        }
+        return items;
+    }
+
+    function ttsRefreshButtons() {
+        const speak = document.getElementById('bt-speak');
+        if (speak) {
+            const active = ttsSpeaking && !ttsPaused;
+            speak.textContent = active ? '⏸' : '▶';
+            const label = active ? t.ttsPause : ttsPaused ? t.ttsResume : t.ttsSpeak;
+            speak.title = label;
+            speak.setAttribute('aria-label', label);
+            speak.setAttribute('aria-pressed', active ? 'true' : 'false');
+        }
+        const stop = document.getElementById('bt-stop');
+        if (stop) stop.disabled = !ttsSpeaking;
+    }
+
+    function ttsStop() {
+        try {
+            const synth = window.speechSynthesis;
+            if (synth && typeof synth.cancel === 'function') synth.cancel();
+        } catch (e) { /* speech unsupported — ignore */ }
+        ttsSpeaking = false;
+        ttsPaused = false;
+        ttsRefreshButtons();
+    }
+
+    function ttsPauseResume() {
+        if (!ttsSupported() || !ttsSpeaking) return;
+        try {
+            if (ttsPaused) {
+                window.speechSynthesis.resume();
+                ttsPaused = false;
+            } else {
+                window.speechSynthesis.pause();
+                ttsPaused = true;
+            }
+        } catch (e) { /* speech unsupported — ignore */ }
+        ttsRefreshButtons();
+    }
+
+    function ttsSpeakAll() {
+        if (!ttsSupported()) { showToast(t.ttsUnsupported); return; }
+        const synth = window.speechSynthesis;
+        try { synth.cancel(); } catch (e) { /* ignore */ }
+        const items = ttsCollectTexts();
+        if (items.length === 0) { showToast(t.ttsEmpty); return; }
+        ttsSpeaking = true;
+        ttsPaused = false;
+        items.forEach((item, idx) => {
+            const utterance = new window.SpeechSynthesisUtterance(item.text);
+            const code = ttsLangCodeFor(item.lang);
+            utterance.lang = code;
+            const voice = ttsPickVoice(code);
+            if (voice) utterance.voice = voice;
+            if (idx === items.length - 1) {
+                utterance.onend = ttsStop;
+                utterance.onerror = ttsStop;
+            }
+            synth.speak(utterance);
+        });
+        ttsRefreshButtons();
     }
 
     // ── DOM Helpers ────────────────────────────────────────────────────
@@ -1064,7 +1407,7 @@
 
     function isPluginNode(el) {
         return !!(el.closest && el.closest('#bt-bar, #bt-menu, #bt-toast'))
-            || (el.classList && (el.classList.contains('bt-translation') || el.classList.contains('bt-loading')));
+            || (el.classList && (el.classList.contains('bt-translation') || el.classList.contains('bt-loading') || el.classList.contains('bt-feedback')));
     }
 
     // Canonical, de-duplicated set of translatable elements in a given document.
@@ -1165,7 +1508,7 @@
         const cached = paragraphTextCache.get(el);
         if (cached !== undefined) return cached;
         const clone = el.cloneNode(true);
-        clone.querySelectorAll('.bt-loading, .bt-translation').forEach(n => n.remove());
+        clone.querySelectorAll('.bt-loading, .bt-translation, .bt-feedback').forEach(n => n.remove());
         const text = clone.textContent.trim();
         paragraphTextCache.set(el, text);
         return text;
@@ -1244,6 +1587,118 @@
         return { book_id: currentBookId(), chapter_id: currentChapterId() };
     }
 
+    // ── Glossary (per-book exact terms, server-injected into prompts) ──
+    let glossaryEntries = [];
+    let glossaryLoading = false;
+    let glossaryLoadedBook = null;
+
+    function loadGlossary() {
+        if (!TRANSLATOR_URL) return Promise.resolve([]);
+        const bookId = currentBookId();
+        if (glossaryLoading || glossaryLoadedBook === bookId) {
+            return Promise.resolve(glossaryEntries);
+        }
+        glossaryLoading = true;
+        const scope = translationScope();
+        const url = `${TRANSLATOR_URL}/glossary?book_id=${encodeURIComponent(scope.book_id)}` +
+            `&chapter_id=${encodeURIComponent(scope.chapter_id)}`;
+        return fetch(url, {
+            headers: apiRequestHeaders(),
+            credentials: apiRequestCredentials(),
+        }).then((resp) => {
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            return resp.json();
+        }).then((data) => {
+            if (data && Array.isArray(data.entries)) {
+                glossaryEntries = data.entries;
+                glossaryLoadedBook = bookId;
+            }
+            return glossaryEntries;
+        }).catch(() => glossaryEntries).finally(() => {
+            glossaryLoading = false;
+        });
+    }
+
+    function saveGlossaryTerm(source, target) {
+        if (!TRANSLATOR_URL) return Promise.resolve(false);
+        const scope = translationScope();
+        return fetch(`${TRANSLATOR_URL}/glossary`, {
+            method: 'POST',
+            headers: apiRequestHeaders({ json: true }),
+            credentials: apiRequestCredentials(),
+            body: JSON.stringify({
+                source, target,
+                book_id: scope.book_id, chapter_id: scope.chapter_id,
+            }),
+        }).then((resp) => {
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            glossaryLoadedBook = null;
+            return loadGlossary().then(() => true);
+        }).catch(() => false);
+    }
+
+    function deleteGlossaryTerm(source) {
+        if (!TRANSLATOR_URL) return Promise.resolve(false);
+        const scope = translationScope();
+        return fetch(`${TRANSLATOR_URL}/glossary`, {
+            method: 'DELETE',
+            headers: apiRequestHeaders({ json: true }),
+            credentials: apiRequestCredentials(),
+            body: JSON.stringify({
+                source, book_id: scope.book_id, chapter_id: scope.chapter_id,
+            }),
+        }).then((resp) => {
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            glossaryLoadedBook = null;
+            return loadGlossary().then(() => true);
+        }).catch(() => false);
+    }
+
+    // ── EPUB export (translated chapter keepsake, server-rebuilt) ──
+    // Packages this session's translated paragraphs (insertion order
+    // approximates reading order) into a minimal EPUB via POST
+    // /export/epub, then downloads the rebuilt file. The request carries
+    // the same auth transport and chapter scope as translation traffic.
+    function exportTranslatedEpub() {
+        const texts = Object.values(translatedParagraphs)
+            .filter((tr) => !isBadTranslation(tr));
+        if (!texts.length || !TRANSLATOR_URL) {
+            showToast(!texts.length ? t.exportEmpty : t.exportFailed);
+            return Promise.resolve(false);
+        }
+        const scope = translationScope();
+        return fetch(`${TRANSLATOR_URL}/export/epub`, {
+            method: 'POST',
+            headers: apiRequestHeaders({ json: true }),
+            credentials: apiRequestCredentials(),
+            body: JSON.stringify({
+                paragraphs: texts,
+                title: (document.title || 'Translated chapter').slice(0, 200),
+                source_lang: SOURCE_LANG,
+                target_lang: TARGET_LANG,
+                book_id: scope.book_id,
+                chapter_id: scope.chapter_id,
+            }),
+        }).then((resp) => {
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            return resp.blob();
+        }).then((blob) => {
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = 'translation.epub';
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+            showToast(t.exportDone);
+            return true;
+        }).catch(() => {
+            showToast(t.exportFailed);
+            return false;
+        });
+    }
+
     function elementContextId(el) {
         if (!el || !el.ownerDocument) return 'unscoped-element';
         const parts = [];
@@ -1251,7 +1706,8 @@
         while (node && node.nodeType === 1 && node.parentElement) {
             const siblings = Array.from(node.parentElement.children).filter(sibling =>
                 !sibling.classList.contains('bt-translation')
-                && !sibling.classList.contains('bt-loading'));
+                && !sibling.classList.contains('bt-loading')
+                && !sibling.classList.contains('bt-feedback'));
             const index = siblings.indexOf(node);
             parts.push(`${node.tagName.toLowerCase()}:${Math.max(0, index)}`);
             if (node.parentElement === node.ownerDocument.body) break;
@@ -1470,6 +1926,7 @@
                 const heading = isHeading(el);
                 transEl = el.ownerDocument.createElement(heading ? 'div' : 'span');
                 transEl.className = 'bt-translation bt-streaming-live ' + (heading ? 'bt-heading-translation' : 'bt-translation-bilingual');
+                transEl.setAttribute('dir', 'auto');
                 if (heading && isCentered(el)) transEl.className += ' bt-center';
                 el.appendChild(transEl);
             }
@@ -1652,7 +2109,7 @@
         isPumpRunning = true;
         
         try {
-            while (translationMode !== 'off' && readerRouteActive) {
+            while (translationMode !== 'off' && readerRouteActive && !isOffline) {
                 const now = Date.now();
                 if (rateLimitUntil > now) {
                     refreshStatus();
@@ -1943,15 +2400,84 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
 
             // Idempotent: update the existing direct-child translation instead of duplicating.
             let transEl = el.querySelector(':scope > .bt-translation');
-            if (transEl) { transEl.textContent = translated; return; }
-
-            const heading = isHeading(el);
-            transEl = el.ownerDocument.createElement(heading ? 'div' : 'span');
-            transEl.className = 'bt-translation ' + (heading ? 'bt-heading-translation' : 'bt-translation-bilingual');
-            if (heading && isCentered(el)) transEl.className += ' bt-center';
-            transEl.textContent = translated;
-            el.appendChild(transEl);
+            if (transEl) {
+                transEl.textContent = translated;
+            } else {
+                const heading = isHeading(el);
+                transEl = el.ownerDocument.createElement(heading ? 'div' : 'span');
+                transEl.className = 'bt-translation ' + (heading ? 'bt-heading-translation' : 'bt-translation-bilingual');
+                transEl.setAttribute('dir', 'auto');
+                if (heading && isCentered(el)) transEl.className += ' bt-center';
+                transEl.textContent = translated;
+                el.appendChild(transEl);
+            }
+            attachFeedbackControls(transEl, hash);
         });
+    }
+
+    // ── Feedback (per-paragraph thumbs, bilingual mode only) ────────────
+    // Buttons render as a sibling AFTER .bt-translation so the translation
+    // node's textContent stays exactly the translated string. Every overlay
+    // guard that knows .bt-translation must also know .bt-feedback
+    // (isBtNode/isPluginNode, getParagraphText, elementContextId,
+    // removeAllTranslations, restoreOriginal). Handlers are assigned
+    // directly because translations may render inside the reader iframe,
+    // outside the parent document's delegated listeners. The paragraph key
+    // is the opaque client cache hash — raw book text is never sent.
+    function sendFeedback(paraKey, rating, controls) {
+        if (!TRANSLATOR_URL || !paraKey) return Promise.resolve(false);
+        const scope = translationScope();
+        return fetch(`${TRANSLATOR_URL}/feedback`, {
+            method: 'POST',
+            headers: apiRequestHeaders({ json: true }),
+            credentials: apiRequestCredentials(),
+            body: JSON.stringify({
+                para_key: paraKey, rating,
+                book_id: scope.book_id, chapter_id: scope.chapter_id,
+            }),
+        }).then((resp) => {
+            if (!resp.ok) return false;
+            if (controls) {
+                controls.querySelectorAll('.bt-fb-btn').forEach((btn) => {
+                    const active = btn.dataset.rating === String(rating);
+                    btn.classList.toggle('bt-fb-active', active);
+                    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+                });
+            }
+            return true;
+        }).catch(() => false);
+    }
+
+    function attachFeedbackControls(transEl, paraKey) {
+        if (!transEl || !paraKey || !transEl.ownerDocument) return;
+        // Sibling (not child): .bt-translation textContent stays exactly the
+        // translated string, which the frontend contract tests assert.
+        const host = transEl.parentElement;
+        if (!host) return;
+        let fb = host.querySelector(':scope > .bt-feedback');
+        if (!fb) {
+            fb = transEl.ownerDocument.createElement('span');
+            fb.className = 'bt-feedback';
+            const mk = (rating, glyph, label) => {
+                const btn = transEl.ownerDocument.createElement('button');
+                btn.type = 'button';
+                btn.className = 'bt-fb-btn';
+                btn.dataset.rating = String(rating);
+                btn.textContent = glyph;
+                btn.title = label;
+                btn.setAttribute('aria-label', label);
+                btn.setAttribute('aria-pressed', 'false');
+                btn.onclick = (e) => {
+                    e.stopPropagation();
+                    sendFeedback(fb.dataset.paraKey, rating, fb);
+                };
+                return btn;
+            };
+            fb.appendChild(mk(1, '👍', t.fbUp));
+            fb.appendChild(mk(-1, '👎', t.fbDown));
+            transEl.after(fb);
+        }
+        fb.dataset.paraKey = paraKey;
     }
 
     function showTranslationsInline(mode, paragraphs) {
@@ -1968,23 +2494,23 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
             if (!el.dataset.originalText) {
                 el.dataset.originalText = text;
                 const clone = el.cloneNode(true);
-                clone.querySelectorAll('.bt-translation, .bt-loading').forEach(n => n.remove());
+                clone.querySelectorAll('.bt-translation, .bt-loading, .bt-feedback').forEach(n => n.remove());
                 const fragment = el.ownerDocument.createDocumentFragment();
                 while (clone.firstChild) fragment.appendChild(clone.firstChild);
                 originalContent.set(el, fragment);
             }
-            // Remove any bilingual/loading spans before replacing the text.
-            el.querySelectorAll('.bt-translation, .bt-loading').forEach(n => n.remove());
+            // Remove any bilingual/loading/feedback spans before replacing the text.
+            el.querySelectorAll('.bt-translation, .bt-loading, .bt-feedback').forEach(n => n.remove());
             el.textContent = translated;
         });
     }
 
     function removeAllTranslations() {
-        document.querySelectorAll('.bt-translation, .bt-loading').forEach(el => el.remove());
+        document.querySelectorAll('.bt-translation, .bt-loading, .bt-feedback').forEach(el => el.remove());
 
         const iframe = getReaderIframe();
         if (iframe && iframe.contentDocument) {
-            iframe.contentDocument.querySelectorAll('.bt-translation, .bt-loading').forEach(el => el.remove());
+            iframe.contentDocument.querySelectorAll('.bt-translation, .bt-loading, .bt-feedback').forEach(el => el.remove());
         }
 
         const restoreIn = (root) => {
@@ -1998,7 +2524,7 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
     const isBtNode = (node) => {
         if (!node || node.nodeType !== 1) return false;
         return !!(node.closest && node.closest(
-            '#bt-bar, #bt-menu, #bt-toast, .bt-translation, .bt-loading'
+            '#bt-bar, #bt-menu, #bt-toast, .bt-translation, .bt-loading, .bt-feedback'
         ));
     };
 
@@ -2283,7 +2809,34 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         setupKeyboardShortcut();
         window.addEventListener('bt:reader-route', () => syncReaderRoute());
         // Persist any pending translations if the user closes/reloads the tab.
+        // pagehide covers mobile Safari and bfcache navigations where
+        // beforeunload does not fire; persistCacheNow is idempotent.
         window.addEventListener('beforeunload', persistCacheNow);
+        window.addEventListener('pagehide', persistCacheNow);
+        window.addEventListener('pagehide', ttsStop);
+        // Offline-first: stop issuing network work while offline (inflight
+        // requests abort into failedParagraphs, queues stay queued), then
+        // clear the failure marks and resume on reconnect. Persisted
+        // translations keep rendering throughout.
+        window.addEventListener('offline', () => {
+            isOffline = true;
+            activeControllers.forEach((controller) => {
+                try { controller.abort(); } catch (e) { /* already settled */ }
+            });
+            refreshStatus();
+        });
+        window.addEventListener('online', () => {
+            isOffline = false;
+            errorCount = 0;
+            failedParagraphs.clear();
+            refreshStatus();
+            if (translationMode !== 'off') {
+                scheduleTranslate('reconnected', { immediate: true });
+            }
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') persistCacheNow();
+        });
         // Brief version toast helps Felix confirm the correct JS is loaded after deploys.
         setTimeout(() => showToast(`BookTranslator ${BT_UI_VERSION}`), 1200);
         if (translationMode !== 'off') {

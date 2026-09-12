@@ -27,6 +27,8 @@ from urllib.parse import urlsplit
 import requests
 from urllib3.util import SKIP_HEADER
 
+from btctl_core import parse_positive_int as _parse_positive_int
+
 
 _COOKIE_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
@@ -151,15 +153,11 @@ def _positive_float(value: object, name: str) -> float:
 
 
 def _positive_int(value: object, name: str) -> int:
-    if isinstance(value, bool):
-        raise BrokerConfigError(f"{name} must be a positive integer")
+    """Shared positive-integer parse; canonical logic lives in btctl_core."""
     try:
-        parsed = int(str(value), 10)
-    except (TypeError, ValueError) as exc:
+        return _parse_positive_int(value)
+    except ValueError as exc:
         raise BrokerConfigError(f"{name} must be a positive integer") from exc
-    if parsed <= 0:
-        raise BrokerConfigError(f"{name} must be a positive integer")
-    return parsed
 
 
 def _binding_parts(binding: object) -> tuple[bytes, bytes]:

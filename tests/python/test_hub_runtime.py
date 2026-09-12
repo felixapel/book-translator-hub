@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import http.client
 import stat
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from hub_runtime import (
     HubConfig,
     HubConfigError,
+    _validate_provider_environment,
+    healthcheck,
     healthcheck_providers,
     prepare_runtime,
     process_specs,
@@ -196,6 +200,47 @@ class HubConfigTests(unittest.TestCase):
         self.assertEqual(specs[1].environment["BT_READER_TYPE"], "kavita")
         self.assertNotIn("BT_KAVITA_LLM_API_KEY", specs[0].environment)
 
+    def test_healthcheck_maps_http_framing_fault_to_unhealthy(self):
+        config = HubConfig.from_environment(dual_reader_environment())
+        with mock.patch(
+            "urllib.request.urlopen",
+            side_effect=http.client.BadStatusLine("bad"),
+        ):
+            self.assertEqual(healthcheck(config), 1)
+
+    def test_local_provider_url_rejects_userinfo(self):
+        environment = {
+            "LLM_PROVIDER": "local",
+            "LLM_MODEL": "gemma4-12b",
+            "BT_LOCAL_URL": (
+                "http://user:pass@host.docker.internal:8000/v1/chat/completions"
+            ),
+        }
+        with self.assertRaises(HubConfigError):
+            _validate_provider_environment(environment, "cwa")
+
+    def test_custom_provider_endpoint_rejects_userinfo(self):
+        environment = {
+            "LLM_PROVIDER": "openai-compatible",
+            "LLM_MODEL": "custom-model",
+            "LLM_CUSTOM_ENDPOINT": (
+                "https://user@api.example.test/v1/chat/completions"
+            ),
+            "LLM_CUSTOM_API_KEY": "secret",
+        }
+        with self.assertRaises(HubConfigError):
+            _validate_provider_environment(environment, "cwa")
+
+    def test_blank_custom_api_key_is_stripped_before_requirement_check(self):
+        environment = {
+            "LLM_PROVIDER": "openai-compatible",
+            "LLM_MODEL": "custom-model",
+            "LLM_CUSTOM_ENDPOINT": "https://api.example.test/v1/chat/completions",
+            "LLM_CUSTOM_API_KEY": "   ",
+        }
+        with self.assertRaisesRegex(HubConfigError, "dedicated key"):
+            _validate_provider_environment(environment, "cwa")
+
     def test_provider_healthcheck_uses_isolated_reader_env_and_fixed_argv(self):
         calls = []
 
@@ -212,9 +257,12 @@ class HubConfigTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0][0], calls[1][0])
         self.assertNotIn("shared-secret", " ".join(calls[0][0]))
-        self.assertEqual(calls[0][1]["env"]["LLM_PROVIDER"], "gemini")
-        self.assertEqual(calls[1][1]["env"]["LLM_PROVIDER"], "local")
-        self.assertLessEqual(calls[0][1]["timeout"], 120)
+        # Provider probes run concurrently, so completion order is not
+        # deterministic: match invocations by their isolated reader env.
+        by_provider = {call[1]["env"]["LLM_PROVIDER"]: call for call in calls}
+        self.assertEqual(set(by_provider), {"gemini", "local"})
+        for call in calls:
+            self.assertLessEqual(call[1]["timeout"], 120)
 
     def test_prepare_runtime_renders_both_readers_and_preflights_before_start(self):
         calls = []

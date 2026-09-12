@@ -33,6 +33,7 @@ from btctl_core import (
     _absolute_dir,
     _require_disjoint_directories,
     ensure_directory_durable,
+    paths_overlap,
     read_private_text,
     redact_mapping,
 )
@@ -74,9 +75,8 @@ def _clean_name(values: Mapping[str, str], name: str) -> str:
 
 
 def _paths_overlap(first: Path, second: Path) -> bool:
-    left = first.resolve()
-    right = second.resolve()
-    return left == right or left in right.parents or right in left.parents
+    """Shared path-containment check; canonical logic lives in btctl_core."""
+    return paths_overlap(first, second)
 
 
 def _runtime_environment(values: Mapping[str, str], runtime: HubConfig) -> dict[str, str]:
@@ -621,6 +621,23 @@ class HubInstaller:
             or set(host.get("CapDrop", [])) != {"ALL"}
             or "no-new-privileges:true" not in security
             or host.get("PidsLimit") != 384
+            or host.get("Memory") != 2 * 1024 * 1024 * 1024
+            or host.get("NanoCpus") != 2_500_000_000
+        ):
+            raise InstallError("hub container sandbox does not match")
+        tmpfs = host.get("Tmpfs")
+        tmpfs_options: set[str] = set()
+        if isinstance(tmpfs, dict) and set(tmpfs) == {"/tmp"}:
+            value = tmpfs.get("/tmp")
+            if isinstance(value, str):
+                tmpfs_options = set(value.split(","))
+        size_options = {
+            item for item in tmpfs_options if item.startswith("size=")
+        }
+        if (
+            tmpfs_options - size_options
+            != {"rw", "noexec", "nosuid", "uid=101", "gid=102", "mode=700"}
+            or size_options != {"size=134217728"}
         ):
             raise InstallError("hub container sandbox does not match")
         expected_bindings = {

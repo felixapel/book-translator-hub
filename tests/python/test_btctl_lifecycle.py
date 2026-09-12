@@ -675,6 +675,17 @@ class LifecycleTests(unittest.TestCase):
             self.assertTrue(completed.resources["proxy"]["removed"])
             self.assertNotIn(plan.resources["api"]["name"], docker.containers)
 
+    def test_uninstall_fails_closed_when_removal_does_not_complete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, plan, docker, _ = self.installed(root)
+            with mock.patch.object(
+                docker,
+                "remove_container",
+                lambda name: docker.calls.append(("remove_container", name)),
+            ), self.assertRaisesRegex(InstallError, "removal did not complete"):
+                RuntimeUninstaller(docker).uninstall(config, plan)
+
     def test_uninstall_retry_fails_closed_when_docker_is_unavailable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

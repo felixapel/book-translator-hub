@@ -30,6 +30,7 @@ from auth import (
 from translator import (
     translate_text, translate_text_stream, translate_batch_detailed as translate_batch,
     check_backend_health,
+    BT_MAX_UPSTREAM_RESPONSE_BYTES,
     BT_UPSTREAM_QUEUE_TIMEOUT, SegmentProtocolError,
     ProviderUnavailableError, create_work_budget, model_for_provider,
     cache_lookup_backends, translation_groups, batch_cache_contract,
@@ -41,11 +42,14 @@ from translator import (
     provider_policy,
     initialize_provider_configuration,
 )
+from epub_export import build_epub, epub_filename
 from work_budget import WorkBudget, WorkBudgetExceeded
 from cache import (
-    CacheScope, get_cached, put_cache, put_cache_many, record_cache_hit,
-    get_cache_stats, cleanup_old_entries,
+    CacheScope, get_cached, get_cached_many, put_cache, put_cache_many,
+    record_cache_hit, get_cache_stats, cleanup_old_entries,
 )
+import feedback as feedback_store
+import glossary as glossary_store
 
 
 def _cache_scope(
@@ -78,6 +82,19 @@ def _operation_namespace(tenant: str, book_id: str, chapter_id: str) -> str:
     ).hexdigest()
 
 
+def _request_glossary(tenant: str, book_id: str) -> list[tuple[str, str]]:
+    """Load stored glossary terms for prompt injection (non-fatal)."""
+    try:
+        entries = glossary_store.list_entries(tenant, book_id)
+    except Exception as exc:
+        log.warning(
+            "Glossary lookup failed (non-fatal) error_type=%s",
+            type(exc).__name__,
+        )
+        return []
+    return [(entry["source"], entry["target"]) for entry in entries]
+
+
 def _cache_lookup(
     text: str,
     source_lang: str,
@@ -89,9 +106,15 @@ def _cache_lookup(
     allow_cloud_fallback: bool = False,
 ) -> str | None:
     """Probe exact single-translation and 1-item batch contracts in provider failover order."""
-    contracts = [single_cache_contract(source_lang, target_lang)]
+    # The glossary is server-owned state for this tenant/book, loaded here so
+    # the probe always uses the exact prompt contract the miss will translate
+    # under. A lookup failure degrades to the no-glossary contract (non-fatal).
+    glossary = _request_glossary(tenant, book_id)
+    contracts = [single_cache_contract(source_lang, target_lang, glossary)]
     try:
-        contracts.append(batch_cache_contract([text], [0], source_lang, target_lang))
+        contracts.append(
+            batch_cache_contract([text], [0], source_lang, target_lang, glossary)
+        )
     except Exception:
         pass
     for provider, model in cache_lookup_backends(
@@ -108,7 +131,14 @@ def _cache_lookup(
                 prompt_hash=contract.prompt_hash,
                 protocol_version=contract.protocol_version,
             )
-            hit = get_cached(text, source_lang, target_lang, scope=scope)
+            try:
+                hit = get_cached(text, source_lang, target_lang, scope=scope)
+            except Exception as exc:
+                log.warning(
+                    "Cache probe failed (non-fatal) error_type=%s",
+                    type(exc).__name__,
+                )
+                continue
             if hit is not None:
                 return hit
     return None
@@ -150,6 +180,28 @@ if BT_REQUEST_MAX_ATTEMPTS < _min_attempts:
     )
 BT_MAX_PARAGRAPH_CHARS = int(os.environ.get("BT_MAX_PARAGRAPH_CHARS", "8000"))
 BT_CACHE_SCOPE_MAX_CHARS = int(os.environ.get("BT_CACHE_SCOPE_MAX_CHARS", "512"))
+
+# EPUB export caps: one export packages a chapter of already-translated
+# text (no LLM work), so the paragraph count may exceed the per-request
+# translation batch while per-paragraph and total-character backstops still
+# bound ZIP build time and memory. Oversized input is rejected with 413.
+BT_MAX_EXPORT_PARAGRAPHS = int(os.environ.get("BT_MAX_EXPORT_PARAGRAPHS", "500"))
+BT_MAX_EXPORT_TITLE_CHARS = int(os.environ.get("BT_MAX_EXPORT_TITLE_CHARS", "200"))
+BT_MAX_EXPORT_TOTAL_CHARS = int(
+    os.environ.get("BT_MAX_EXPORT_TOTAL_CHARS", str(1024 * 1024))
+)
+if not 1 <= BT_MAX_EXPORT_PARAGRAPHS <= 5000:
+    raise ValueError(
+        "BT_MAX_EXPORT_PARAGRAPHS must be an integer from 1 to 5000"
+    )
+if not 1 <= BT_MAX_EXPORT_TITLE_CHARS <= 500:
+    raise ValueError(
+        "BT_MAX_EXPORT_TITLE_CHARS must be an integer from 1 to 500"
+    )
+if not 1024 <= BT_MAX_EXPORT_TOTAL_CHARS <= 10 * 1024 * 1024:
+    raise ValueError(
+        "BT_MAX_EXPORT_TOTAL_CHARS must be an integer from 1024 to 10485760"
+    )
 
 # Global request-size cap (defence in depth). The per-field caps above check
 # the *parsed* content; MAX_CONTENT_LENGTH is a hard backstop at the WSGI
@@ -955,6 +1007,7 @@ def _translate_paragraphs(
     book_id: str = "unscoped",
     chapter_id: str = "unscoped",
     allow_cloud_fallback: bool = False,
+    glossary: list[tuple[str, str]] | None = None,
 ) -> dict:
     """
     Shared helper for batch translation logic used by /translate/batch.
@@ -989,10 +1042,78 @@ def _translate_paragraphs(
     missing_groups: list[list[int]] = []
     contracts = {
         tuple(group): batch_cache_contract(
-            paragraphs, group, source_lang, target_lang
+            paragraphs, group, source_lang, target_lang, glossary
         )
         for group in groups
     }
+
+    # Collapse repeated (text, backend, contract) probes across groups and
+    # providers: one batch fetch per unseen triple, memoized for the request.
+    probe_memo: dict[
+        tuple[str, str, str, str, str, str],
+        tuple[str | None, CacheScope],
+    ] = {}
+
+    def _probe_many(
+        items: list[tuple[int, str, CacheScope, tuple[str, str, str, str, str, str]]],
+    ) -> dict[int, tuple[str | None, CacheScope]]:
+        probed: dict[int, tuple[str | None, CacheScope]] = {}
+        missing: list[tuple[int, str, CacheScope, tuple[str, str, str, str, str, str]]] = []
+        for index, text, scope, memo_key in items:
+            if memo_key in probe_memo:
+                probed[index] = probe_memo[memo_key]
+            else:
+                missing.append((index, text, scope, memo_key))
+        if missing:
+            hits = get_cached_many(
+                [
+                    (text, source_lang, target_lang, scope)
+                    for _, text, scope, _ in missing
+                ],
+                record_hit=False,
+            )
+            for (index, _, scope, memo_key), hit in zip(missing, hits):
+                probe_memo[memo_key] = (hit, scope)
+                probed[index] = (hit, scope)
+        return probed
+
+    def _probe_items(
+        group: list[int], contract, provider: str, model: str,
+    ) -> list[tuple[int, str, CacheScope, tuple[str, str, str, str, str, str]]]:
+        items = []
+        for index in group:
+            scope = _cache_scope(
+                tenant=tenant,
+                book_id=book_id,
+                chapter_id=chapter_id,
+                context_hash=contract.context_hash,
+                provider=provider,
+                model=model,
+                prompt_hash=contract.prompt_hash,
+                protocol_version=contract.protocol_version,
+            )
+            memo_key = (
+                paragraphs[index],
+                provider,
+                model,
+                contract.context_hash,
+                contract.prompt_hash,
+                contract.protocol_version,
+            )
+            items.append((index, paragraphs[index], scope, memo_key))
+        return items
+
+    def _accept(
+        items: list[tuple[int, str, CacheScope, tuple[str, str, str, str, str, str]]],
+    ) -> list[tuple[int, str, CacheScope]] | None:
+        probed = _probe_many(items)
+        candidate: list[tuple[int, str, CacheScope]] = []
+        for index, _, scope, _ in items:
+            hit, _ = probed[index]
+            if hit is None:
+                return None
+            candidate.append((index, hit, scope))
+        return candidate or None
 
     for group in groups:
         contract = contracts[tuple(group)]
@@ -1000,59 +1121,19 @@ def _translate_paragraphs(
         for provider, model in cache_lookup_backends(
             allow_cloud_fallback=allow_cloud_fallback
         ):
-            candidate: list[tuple[int, str, CacheScope]] = []
-            for index in group:
-                scope = _cache_scope(
-                    tenant=tenant,
-                    book_id=book_id,
-                    chapter_id=chapter_id,
-                    context_hash=contract.context_hash,
-                    provider=provider,
-                    model=model,
-                    prompt_hash=contract.prompt_hash,
-                    protocol_version=contract.protocol_version,
-                )
-                hit = get_cached(
-                    paragraphs[index],
-                    source_lang,
-                    target_lang,
-                    scope=scope,
-                    record_hit=False,
-                )
-                if hit is None:
-                    candidate = []
-                    break
-                candidate.append((index, hit, scope))
-            if candidate:
-                accepted = candidate
+            accepted = _accept(_probe_items(group, contract, provider, model))
+            if accepted is not None:
                 break
 
         if accepted is None:
-            single_c = single_cache_contract(source_lang, target_lang)
+            single_c = single_cache_contract(source_lang, target_lang, glossary)
             for provider, model in cache_lookup_backends(
                 allow_cloud_fallback=allow_cloud_fallback
             ):
-                candidate_single = []
-                for idx in group:
-                    scope = _cache_scope(
-                        tenant=tenant,
-                        book_id=book_id,
-                        chapter_id=chapter_id,
-                        context_hash=single_c.context_hash,
-                        provider=provider,
-                        model=model,
-                        prompt_hash=single_c.prompt_hash,
-                        protocol_version=single_c.protocol_version,
-                    )
-                    hit = get_cached(
-                        paragraphs[idx], source_lang, target_lang, scope=scope, record_hit=False
-                    )
-                    if hit is None:
-                        candidate_single = []
-                        break
-                    candidate_single.append((idx, hit, scope))
-                if candidate_single:
-                    accepted = candidate_single
+                accepted = _accept(
+                    _probe_items(group, single_c, provider, model)
+                )
+                if accepted is not None:
                     break
 
         if accepted is None:
@@ -1085,6 +1166,7 @@ def _translate_paragraphs(
                 ),
                 allow_cloud_fallback=allow_cloud_fallback,
                 recovery_tracker=recovery_tracker,
+                glossary=glossary,
             )
         finally:
             _flush_segment_recovery(recovery_tracker)
@@ -1121,11 +1203,15 @@ def _translate_paragraphs(
         if cache_writes:
             try:
                 put_cache_many(cache_writes)
+                _invalidate_stats_cache()
             except Exception as exc:
                 log.error(
                     "Cache write failed (non-fatal) error_type=%s",
                     type(exc).__name__,
                 )
+
+    if cached_count:
+        _invalidate_stats_cache()
 
     total_elapsed_ms = int((time.monotonic() - start) * 1000)
 
@@ -1486,10 +1572,30 @@ def deep_health():
     })
 
 
+_stats_cache_lock = threading.Lock()
+_stats_cache: dict[str, object] = {"data": None, "ts": 0.0}
+_STATS_TTL_SECONDS = 5.0
+
+
+def _invalidate_stats_cache() -> None:
+    """Drop the /stats snapshot after this process mutates the cache."""
+    with _stats_cache_lock:
+        _stats_cache["data"] = None
+
+
 @app.route("/stats")
 def stats():
-    """Return cache statistics."""
-    return jsonify(get_cache_stats())
+    """Return cache statistics (snapshot held for a few seconds)."""
+    now = time.monotonic()
+    with _stats_cache_lock:
+        payload = _stats_cache["data"]
+        if payload is not None and (now - _stats_cache["ts"]) < _STATS_TTL_SECONDS:
+            return jsonify(payload)
+    fresh = get_cache_stats()
+    with _stats_cache_lock:
+        _stats_cache["data"] = fresh
+        _stats_cache["ts"] = time.monotonic()
+    return jsonify(fresh)
 
 
 @app.route("/metrics")
@@ -1612,6 +1718,8 @@ def translate():
             "request_id": req_id,
         })
 
+    glossary = _request_glossary(tenant, book_id)
+
     # Check cache first
     cached = _cache_lookup(
         text,
@@ -1624,6 +1732,7 @@ def translate():
     )
     if cached is not None:
         _record_metric(0, hits=1, misses=0)
+        _invalidate_stats_cache()
         return jsonify({
             "translated": cached,
             "cached": True,
@@ -1643,6 +1752,7 @@ def translate():
                 tenant, book_id, chapter_id
             ),
             allow_cloud_fallback=allow_cloud_fallback,
+            glossary=glossary,
         )
     except WorkBudgetExceeded as exc:
         elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -1675,7 +1785,7 @@ def translate():
 
     # Store in cache with correct model name
     try:
-        contract = single_cache_contract(source_lang, target_lang)
+        contract = single_cache_contract(source_lang, target_lang, glossary)
         scope = _cache_scope(
             tenant=tenant,
             book_id=book_id,
@@ -1694,7 +1804,8 @@ def translate():
             scope=scope,
         )
         try:
-            batch_c = batch_cache_contract([text], [0], source_lang, target_lang)
+            batch_c = batch_cache_contract(
+                [text], [0], source_lang, target_lang, glossary)
             batch_scope = _cache_scope(
                 tenant=tenant,
                 book_id=book_id,
@@ -1714,6 +1825,7 @@ def translate():
             )
         except Exception:
             pass
+        _invalidate_stats_cache()
     except Exception as e:
         log.error("Cache write failed (non-fatal) error_type=%s", type(e).__name__)
 
@@ -1725,6 +1837,10 @@ def translate():
         "request_id": req_id,
     })
 
+
+
+class _StreamResponseTooLarge(RuntimeError):
+    """Streamed provider output crossed the configured in-memory boundary."""
 
 
 @app.route("/translate/stream", methods=["POST"])
@@ -1796,6 +1912,8 @@ def translate_stream():
             yield f"event: done\ndata: {json.dumps({'translated': text, 'cached': False, 'skipped': 'source==target', 'elapsed_ms': 0, 'request_id': req_id})}\n\n"
         return Response(echo_gen(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+    glossary = _request_glossary(tenant, book_id)
+
     cached = _cache_lookup(
         text,
         source_lang,
@@ -1807,6 +1925,7 @@ def translate_stream():
     )
     if cached is not None:
         _record_metric(0, hits=1, misses=0)
+        _invalidate_stats_cache()
         def cached_gen():
             yield f"data: {json.dumps({'delta': cached, 'cached': True})}\n\n"
             yield f"event: done\ndata: {json.dumps({'translated': cached, 'cached': True, 'elapsed_ms': 0, 'request_id': req_id})}\n\n"
@@ -1817,6 +1936,7 @@ def translate_stream():
 
     def stream_gen():
         full_text = []
+        streamed_bytes = 0
         backend_used = "local"
         try:
             for delta, backend in translate_text_stream(
@@ -1825,7 +1945,14 @@ def translate_stream():
                 target_lang,
                 budget=budget,
                 allow_cloud_fallback=allow_cloud_fallback,
+                glossary=glossary,
             ):
+                streamed_bytes += len(delta.encode("utf-8", errors="strict"))
+                if streamed_bytes > BT_MAX_UPSTREAM_RESPONSE_BYTES:
+                    log.warning(
+                        "req=%s stream response exceeded byte cap", req_id
+                    )
+                    raise _StreamResponseTooLarge()
                 full_text.append(delta)
                 backend_used = backend
                 yield f"data: {json.dumps({'delta': delta, 'cached': False})}\n\n"
@@ -1835,7 +1962,8 @@ def translate_stream():
             _record_metric(elapsed_ms, hits=0, misses=1)
 
             try:
-                contract = single_cache_contract(source_lang, target_lang)
+                contract = single_cache_contract(
+                    source_lang, target_lang, glossary)
                 scope = _cache_scope(
                     tenant=tenant,
                     book_id=book_id,
@@ -1854,7 +1982,8 @@ def translate_stream():
                     scope=scope,
                 )
                 try:
-                    batch_c = batch_cache_contract([text], [0], source_lang, target_lang)
+                    batch_c = batch_cache_contract(
+                        [text], [0], source_lang, target_lang, glossary)
                     batch_scope = _cache_scope(
                         tenant=tenant,
                         book_id=book_id,
@@ -1874,15 +2003,56 @@ def translate_stream():
                     )
                 except Exception:
                     pass
+                _invalidate_stats_cache()
             except Exception as e:
                 log.error("Failed to cache streamed translation: %s", e)
 
             yield f"event: done\ndata: {json.dumps({'translated': complete_translation, 'cached': False, 'backend': backend_used, 'elapsed_ms': elapsed_ms, 'request_id': req_id})}\n\n"
+        except WorkBudgetExceeded as exc:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            _record_metric(elapsed_ms, hits=0, misses=1, error=True)
+            _record_work_budget_exhaustion(exc.reason)
+            log.warning(
+                "req=%s stream work rejected reason=%s", req_id, exc.reason
+            )
+            payload = {
+                "error": "work_budget_exhausted",
+                "error_code": "work_budget_exhausted",
+                "reason": exc.reason,
+                "request_id": req_id,
+            }
+            if exc.reason == "queue":
+                payload["retry_after_seconds"] = max(
+                    1, math.ceil(BT_UPSTREAM_QUEUE_TIMEOUT)
+                )
+            yield f"event: error\ndata: {json.dumps(payload)}\n\n"
+        except ProviderUnavailableError as exc:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            _record_metric(elapsed_ms, hits=0, misses=1, error=True)
+            _record_outcome("provider_unavailable")
+            log.warning(
+                "req=%s stream provider unavailable error_code=%s",
+                req_id, exc.error_code,
+            )
+            payload = {
+                "error": exc.error_code or "provider_unavailable",
+                "error_code": exc.error_code or "provider_unavailable",
+                "request_id": req_id,
+            }
+            if exc.retry_after_seconds is not None:
+                payload["retry_after_seconds"] = exc.retry_after_seconds
+            yield f"event: error\ndata: {json.dumps(payload)}\n\n"
+        except _StreamResponseTooLarge:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            _record_metric(elapsed_ms, hits=0, misses=1, error=True)
+            _record_outcome("translation_failed")
+            yield f"event: error\ndata: {json.dumps({'error': 'response_too_large', 'error_code': 'response_too_large', 'request_id': req_id})}\n\n"
         except Exception as exc:
             elapsed_ms = int((time.monotonic() - start) * 1000)
             _record_metric(elapsed_ms, hits=0, misses=1, error=True)
+            _record_outcome("translation_failed")
             log.error("Stream generation failed error_type=%s", type(exc).__name__)
-            yield f"event: error\ndata: {json.dumps({'error': 'translation_failed', 'request_id': req_id})}\n\n"
+            yield f"event: error\ndata: {json.dumps({'error': 'translation_failed', 'error_code': 'translation_failed', 'request_id': req_id})}\n\n"
 
     return Response(
         stream_with_context(stream_gen()),
@@ -2007,6 +2177,7 @@ def translate_batch_endpoint():
             book_id=book_id,
             chapter_id=chapter_id,
             allow_cloud_fallback=allow_cloud_fallback,
+            glossary=_request_glossary(tenant, book_id),
         )
     except WorkBudgetExceeded as exc:
         _record_metric(0, hits=0, misses=1, error=True)
@@ -2057,6 +2228,265 @@ def translate_batch_endpoint():
 
 
 
+@app.route("/export/epub", methods=["POST"])
+def export_epub():
+    """Rebuild a minimal EPUB from already-translated chapter text.
+
+    POST body: {
+        "paragraphs": ["Translated 1", "Translated 2", ...],
+        "title": "Chapter 1",
+        "source_lang": "English",
+        "target_lang": "Spanish"
+    }
+
+    Returns the rebuilt EPUB as application/epub+zip. Authentication and
+    per-client rate limiting apply via the shared before-request hook; no
+    LLM work is spent here, so no provider policy or cloud-consent fields
+    are accepted. Book/chapter identifiers are validated with the shared
+    scope contract so client metadata stays bounded.
+    """
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+    if "paragraphs" not in data or not isinstance(data["paragraphs"], list):
+        return jsonify({"error": "Missing or invalid 'paragraphs' field"}), 400
+
+    paragraphs = data["paragraphs"]
+    if not paragraphs:
+        return jsonify({"error": "'paragraphs' must not be empty"}), 400
+    if len(paragraphs) > BT_MAX_EXPORT_PARAGRAPHS:
+        return jsonify({
+            "error": f"Too many paragraphs ({len(paragraphs)}); max {BT_MAX_EXPORT_PARAGRAPHS} per export"
+        }), 413
+    if not all(isinstance(p, str) for p in paragraphs):
+        return jsonify({"error": "All 'paragraphs' entries must be strings"}), 400
+    invalid_unicode = next(
+        (i for i, paragraph in enumerate(paragraphs)
+         if _has_invalid_unicode(paragraph)),
+        None,
+    )
+    if invalid_unicode is not None:
+        return jsonify({
+            "error": f"Paragraph {invalid_unicode} contains invalid Unicode"
+        }), 400
+    oversized = next((i for i, p in enumerate(paragraphs) if len(p) > BT_MAX_PARAGRAPH_CHARS), None)
+    if oversized is not None:
+        return jsonify({
+            "error": f"Paragraph {oversized} exceeds the {BT_MAX_PARAGRAPH_CHARS}-character limit"
+        }), 413
+    total_chars = sum(len(p) for p in paragraphs)
+    if total_chars > BT_MAX_EXPORT_TOTAL_CHARS:
+        return jsonify({
+            "error": f"Export exceeds the {BT_MAX_EXPORT_TOTAL_CHARS}-character limit"
+        }), 413
+
+    title = data.get("title", "Translated chapter")
+    if not isinstance(title, str) or not title.strip():
+        return jsonify({"error": "Missing or invalid 'title' field"}), 400
+    title = title.strip()
+    if len(title) > BT_MAX_EXPORT_TITLE_CHARS:
+        return jsonify({
+            "error": f"'title' exceeds the {BT_MAX_EXPORT_TITLE_CHARS}-character limit"
+        }), 413
+    if _has_invalid_unicode(title):
+        return jsonify({"error": "'title' contains invalid Unicode"}), 400
+
+    source_lang = data.get("source_lang", "English")
+    target_lang = data.get("target_lang", "Spanish")
+    lang_error = _validate_languages(source_lang, target_lang)
+    if lang_error:
+        return jsonify({"error": lang_error}), 400
+
+    try:
+        _request_cache_namespace(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    try:
+        epub_bytes = build_epub(
+            title,
+            [paragraph.strip() for paragraph in paragraphs],
+            target_lang=target_lang,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    response = Response(epub_bytes, mimetype="application/epub+zip")
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="{epub_filename(title)}"'
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/glossary", methods=["GET"])
+def glossary_list():
+    """List stored glossary terms for one book.
+
+    Query params: book_id, chapter_id (both optional, same contract as the
+    translate endpoints). Returns {"entries": [{"source": .., "target": ..}]}.
+    """
+    try:
+        tenant, book_id, _chapter_id = _request_cache_namespace(
+            request.args.to_dict()
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        entries = glossary_store.list_entries(tenant, book_id)
+    except Exception:
+        log.error("Glossary list failed error_type=%s", "Exception")
+        return jsonify({
+            "error": "glossary_unavailable",
+            "request_id": getattr(request, "request_id", None),
+        }), 500
+    return jsonify({
+        "entries": entries,
+        "request_id": getattr(request, "request_id", None),
+    })
+
+
+@app.route("/glossary", methods=["POST"])
+def glossary_upsert():
+    """Insert or replace one glossary term for one book.
+
+    POST body: {"source": "..", "target": "..",
+                "book_id": "..", "chapter_id": ".."}.
+    """
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+    try:
+        tenant, book_id, _chapter_id = _request_cache_namespace(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not isinstance(data.get("source"), str) or not isinstance(
+        data.get("target"), str
+    ):
+        return jsonify(
+            {"error": "Missing or invalid 'source'/'target' field"}), 400
+    try:
+        entry = glossary_store.put_entry(
+            tenant, book_id, data["source"], data["target"]
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        log.error("Glossary write failed error_type=%s", "Exception")
+        return jsonify({
+            "error": "glossary_unavailable",
+            "request_id": getattr(request, "request_id", None),
+        }), 500
+    _invalidate_stats_cache()
+    return jsonify({
+        "entry": entry,
+        "request_id": getattr(request, "request_id", None),
+    })
+
+
+@app.route("/glossary", methods=["DELETE"])
+def glossary_delete():
+    """Delete one glossary term for one book.
+
+    DELETE body: {"source": "..", "book_id": "..", "chapter_id": ".."}.
+    Returns 404 when the term does not exist.
+    """
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+    try:
+        tenant, book_id, _chapter_id = _request_cache_namespace(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not isinstance(data.get("source"), str):
+        return jsonify({"error": "Missing or invalid 'source' field"}), 400
+    try:
+        removed = glossary_store.delete_entry(tenant, book_id, data["source"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        log.error("Glossary delete failed error_type=%s", "Exception")
+        return jsonify({
+            "error": "glossary_unavailable",
+            "request_id": getattr(request, "request_id", None),
+        }), 500
+    if not removed:
+        return jsonify({
+            "error": "glossary_term_not_found",
+            "request_id": getattr(request, "request_id", None),
+        }), 404
+    _invalidate_stats_cache()
+    return jsonify({
+        "deleted": True,
+        "request_id": getattr(request, "request_id", None),
+    })
+
+
+@app.route("/feedback", methods=["POST"])
+def feedback_record():
+    """Record one per-paragraph rating for one book.
+
+    POST body: {"para_key": "<opaque client paragraph key>",
+                "rating": +1/-1 (or "up"/"down"),
+                "book_id": "..", "chapter_id": ".."}.
+    The key is an opaque identifier (hash of source text plus scope);
+    raw book text is never accepted or stored here.
+    """
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+    try:
+        tenant, book_id, _chapter_id = _request_cache_namespace(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if "para_key" not in data or "rating" not in data:
+        return jsonify(
+            {"error": "Missing 'para_key'/'rating' field"}), 400
+    try:
+        record = feedback_store.record_feedback(
+            tenant, book_id, data["para_key"], data["rating"]
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        log.error("Feedback write failed error_type=%s", "Exception")
+        return jsonify({
+            "error": "feedback_unavailable",
+            "request_id": getattr(request, "request_id", None),
+        }), 500
+    return jsonify({
+        "feedback": record,
+        "request_id": getattr(request, "request_id", None),
+    })
+
+
+@app.route("/feedback/summary", methods=["GET"])
+def feedback_summary():
+    """Return rating totals for one book: up/down/total/score.
+
+    Query params: book_id, chapter_id (both optional, same contract as the
+    translate endpoints).
+    """
+    try:
+        tenant, book_id, _chapter_id = _request_cache_namespace(
+            request.args.to_dict()
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        summary = feedback_store.get_summary(tenant, book_id)
+    except Exception:
+        log.error("Feedback summary failed error_type=%s", "Exception")
+        return jsonify({
+            "error": "feedback_unavailable",
+            "request_id": getattr(request, "request_id", None),
+        }), 500
+    return jsonify({
+        "summary": summary,
+        "request_id": getattr(request, "request_id", None),
+    })
+
+
 class CleanupCredentialUnavailable(RuntimeError):
     """The destructive endpoint cannot establish a shared credential."""
 
@@ -2105,6 +2535,7 @@ def cache_cleanup():
     if isinstance(days, bool) or not isinstance(days, int) or not (1 <= days <= 3650):
         return jsonify({"error": "'days' must be an integer between 1 and 3650"}), 400
     deleted = cleanup_old_entries(days=days)
+    _invalidate_stats_cache()
     return jsonify({"deleted": deleted, "days": days})
 
 

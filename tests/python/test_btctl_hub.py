@@ -305,7 +305,12 @@ class HubBtctlTests(unittest.TestCase):
                         "Privileged": False,
                         "CapDrop": ["ALL"],
                         "SecurityOpt": ["no-new-privileges:true"],
+                        "Tmpfs": {
+                            "/tmp": service["tmpfs"][0].split(":", 1)[1]
+                        },
                         "PidsLimit": 384,
+                        "Memory": 2 * 1024 * 1024 * 1024,
+                        "NanoCpus": 2_500_000_000,
                         "PortBindings": {
                             "8080/tcp": [{"HostPort": "8385"}],
                             "8081/tcp": [{"HostPort": "8386"}],

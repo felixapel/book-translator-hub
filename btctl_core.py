@@ -15,7 +15,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Protocol
 from urllib.parse import urlsplit
 
 
@@ -157,6 +157,54 @@ def ensure_directory_durable(
         raise
     except OSError as exc:
         raise ConfigError("managed directory could not be created durably") from exc
+
+
+def paths_overlap(first: Path, second: Path) -> bool:
+    """Return True when two paths are equal or one contains the other.
+
+    Shared canonical implementation for the installer validators: both
+    operands are resolved so symlinked aliases of the same directory still
+    compare as overlapping.
+    """
+    left = first.resolve()
+    right = second.resolve()
+    return left == right or left in right.parents or right in left.parents
+
+
+def parse_positive_int(value: object) -> int:
+    """Parse a strictly positive integer, raising ValueError when invalid.
+
+    Shared canonical implementation: bools are rejected explicitly because
+    ``int(True)`` would otherwise parse as ``1``. Callers map the
+    ValueError onto their own domain error type.
+    """
+    if isinstance(value, bool):
+        raise ValueError("value must be a positive integer")
+    try:
+        parsed = int(str(value), 10)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("value must be a positive integer") from exc
+    if parsed <= 0:
+        raise ValueError("value must be a positive integer")
+    return parsed
+
+
+class DockerProbeBase(Protocol):
+    """Common read/probe surface shared by every Docker control Protocol.
+
+    Role-specific Protocols (compose, lifecycle, unraid) extend this base
+    with their mutating operations instead of redeclaring the shared probe
+    methods one by one.
+    """
+
+    def require_available(self) -> None: ...
+    def inspect_container(self, name: str) -> dict | None: ...
+    def inspect_network(self, name: str) -> dict | None: ...
+    def inspect_image(self, name: str) -> dict | None: ...
+    def wait_healthy(self, names: list[str], timeout_seconds: int) -> None: ...
+    def probe_http(self, container: str, url: str) -> None: ...
+    def probe_auth(self, container: str, url: str) -> None: ...
+    def probe_sqlite(self, container: str, database_path: str) -> None: ...
 
 
 def read_private_text(directory: Path, filename: str, *, label: str) -> str:
