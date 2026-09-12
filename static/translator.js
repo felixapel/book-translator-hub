@@ -289,6 +289,7 @@
 
     function newGeneration() {
         generation++;
+        invalidateParagraphsCache();
         // A chapter/page/language/mode turn invalidates queued speech too.
         try { ttsStop(); } catch (e) { /* speech may be unavailable */ }
         rateLimitResponses.clear();
@@ -1257,11 +1258,14 @@
 
     let ttsSpeaking = false;
     let ttsPaused = false;
+    let speachesAudio = null;
+    let speachesQueue = [];
+    let speachesIndex = 0;
 
     function ttsSupported() {
         try {
             return typeof window !== 'undefined'
-                && !!window.speechSynthesis && !!window.SpeechSynthesisUtterance;
+                && (typeof Audio !== 'undefined' || (!!window.speechSynthesis && !!window.SpeechSynthesisUtterance));
         } catch (e) { return false; }
     }
 
@@ -1316,6 +1320,12 @@
     }
 
     function ttsStop() {
+        if (speachesAudio) {
+            try { speachesAudio.pause(); } catch (e) {}
+            speachesAudio = null;
+        }
+        speachesQueue = [];
+        speachesIndex = 0;
         try {
             const synth = window.speechSynthesis;
             if (synth && typeof synth.cancel === 'function') synth.cancel();
@@ -1327,26 +1337,32 @@
 
     function ttsPauseResume() {
         if (!ttsSupported() || !ttsSpeaking) return;
-        try {
+        if (speachesAudio) {
             if (ttsPaused) {
-                window.speechSynthesis.resume();
+                try { speachesAudio.play(); } catch (e) {}
                 ttsPaused = false;
             } else {
-                window.speechSynthesis.pause();
+                try { speachesAudio.pause(); } catch (e) {}
                 ttsPaused = true;
             }
-        } catch (e) { /* speech unsupported — ignore */ }
+        } else {
+            try {
+                if (ttsPaused) {
+                    window.speechSynthesis.resume();
+                    ttsPaused = false;
+                } else {
+                    window.speechSynthesis.pause();
+                    ttsPaused = true;
+                }
+            } catch (e) { /* speech unsupported — ignore */ }
+        }
         ttsRefreshButtons();
     }
 
-    function ttsSpeakAll() {
-        if (!ttsSupported()) { showToast(t.ttsUnsupported); return; }
+    function ttsFallbackSpeak(items) {
         const synth = window.speechSynthesis;
+        if (!synth) { ttsStop(); return; }
         try { synth.cancel(); } catch (e) { /* ignore */ }
-        const items = ttsCollectTexts();
-        if (items.length === 0) { showToast(t.ttsEmpty); return; }
-        ttsSpeaking = true;
-        ttsPaused = false;
         items.forEach((item, idx) => {
             const utterance = new window.SpeechSynthesisUtterance(item.text);
             const code = ttsLangCodeFor(item.lang);
@@ -1359,7 +1375,76 @@
             }
             synth.speak(utterance);
         });
+    }
+
+    async function ttsPlaySpeachesNext() {
+        if (!ttsSpeaking || speachesIndex >= speachesQueue.length) {
+            ttsStop();
+            return;
+        }
+        const item = speachesQueue[speachesIndex];
+        try {
+            const res = await fetch(API_BASE + '/tts/synthesize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: item.text, lang: item.lang })
+            });
+            if (!res.ok) throw new Error('Speaches HTTP ' + res.status);
+            const blob = await res.blob();
+            if (!ttsSpeaking) return;
+            const audioUrl = URL.createObjectURL(blob);
+            speachesAudio = new Audio(audioUrl);
+            speachesAudio.onended = () => {
+                URL.revokeObjectURL(audioUrl);
+                speachesAudio = null;
+                speachesIndex++;
+                ttsPlaySpeachesNext();
+            };
+            speachesAudio.onerror = () => {
+                URL.revokeObjectURL(audioUrl);
+                speachesAudio = null;
+                speachesIndex++;
+                ttsPlaySpeachesNext();
+            };
+            await speachesAudio.play();
+        } catch (err) {
+            console.warn('Speaches TTS playback fallback:', err);
+            // Fallback remaining items to browser synth
+            const remaining = speachesQueue.slice(speachesIndex);
+            speachesQueue = [];
+            ttsFallbackSpeak(remaining);
+        }
+    }
+
+    async function ttsSpeakAll() {
+        if (!ttsSupported()) { showToast(t.ttsUnsupported); return; }
+        ttsStop();
+        const items = ttsCollectTexts();
+        if (items.length === 0) { showToast(t.ttsEmpty); return; }
+        ttsSpeaking = true;
+        ttsPaused = false;
         ttsRefreshButtons();
+
+        let useSpeaches = false;
+        try {
+            const probe = await fetch(API_BASE + '/tts/status');
+            if (probe.ok) {
+                const info = await probe.json();
+                if (info && info.enabled && info.status === 'ready') {
+                    useSpeaches = true;
+                }
+            }
+        } catch (e) {
+            useSpeaches = false;
+        }
+
+        if (useSpeaches && typeof Audio !== 'undefined') {
+            speachesQueue = items;
+            speachesIndex = 0;
+            ttsPlaySpeachesNext();
+        } else {
+            ttsFallbackSpeak(items);
+        }
     }
 
     // ── DOM Helpers ────────────────────────────────────────────────────
@@ -1463,8 +1548,27 @@
         return filtered.filter(el => !ancestorsToDrop.has(el));
     }
 
+    let _cachedParagraphs = null;
+    let _cachedRoot = null;
+    let _cachedGen = -1;
+
+    function invalidateParagraphsCache() {
+        _cachedParagraphs = null;
+        _cachedRoot = null;
+    }
+
     function getParagraphs() {
-        return getTranslatableElements(getReaderRoot());
+        const root = getReaderRoot();
+        if (_cachedParagraphs && _cachedRoot === root && _cachedGen === generation) {
+            if (_cachedParagraphs.length === 0 || (_cachedParagraphs[0] && _cachedParagraphs[0].isConnected)) {
+                return _cachedParagraphs;
+            }
+        }
+        const elements = getTranslatableElements(root);
+        _cachedParagraphs = elements;
+        _cachedRoot = root;
+        _cachedGen = generation;
+        return elements;
     }
 
     function getVisibleParagraphs() {
@@ -2137,6 +2241,8 @@
 
                 if (visibleQueue.length === 0 && prefetchQueue.length > 0
                         && nextPrefetchAt > now) {
+                    isPrefetching = false;
+                    refreshStatus();
                     await waitForPrefetchGap(nextPrefetchAt - now);
                     continue;
                 }
@@ -2255,6 +2361,8 @@
                 const failed = batch.filter(b => !translatedParagraphs[b.hash]);
                 if (failed.length) markBatchFailed(failed);
                 else if (anyGood) errorCount = 0;
+                if (!isVisible) isPrefetching = false;
+                else isTranslating = false;
                 refreshStatus();
                 
                 if (stored) {
@@ -2306,13 +2414,10 @@
             ? allParagraphs.slice(lastVisibleIdx + 1).filter(el => !visibleSet.has(el))
             : allParagraphs.filter(el => !visibleSet.has(el));
 
-        // Priority 2: Backward paragraphs (prior pages in chapter, lower priority)
-        const backwardEls = (lastVisibleIdx >= 0)
-            ? allParagraphs.slice(0, lastVisibleIdx).filter(el => !visibleSet.has(el))
-            : [];
-
-        // Combined prefetch queue in strict reading direction: forward first, backward last!
-        const prefetchEls = prefetchEnabled ? [...forwardEls, ...backwardEls] : [];
+        // Combined prefetch queue: bounded forward lookahead only (max 8 paragraphs ahead)
+        const MAX_PREFETCH_AHEAD = boundedInteger(cfg.maxPrefetchParagraphs, 1, 50, 8);
+        const forwardSlice = forwardEls.slice(0, MAX_PREFETCH_AHEAD);
+        const prefetchEls = prefetchEnabled ? forwardSlice : [];
         prefetchQueue = collectUncached(prefetchEls).map(x => ({...x, gen: myGen}));
         // No snapshot total here: refreshStatus derives done/total live from
         // chapterDone + inflight + queues (see chapterProgress), so re-triggers
@@ -2850,3 +2955,4 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         init();
     }
 })();
+

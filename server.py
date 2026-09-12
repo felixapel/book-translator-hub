@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 from flask import Flask, request, jsonify, Response, stream_with_context
 from werkzeug.exceptions import HTTPException
 
+from tts import TTS_SERVICE, resolve_kokoro_voice
 from auth import (
     AuthRejected,
     AuthUnavailable,
@@ -497,7 +498,7 @@ _rate_limit_lock = threading.Lock()
 _rate_limit_store: dict[str, list[float]] = defaultdict(list)
 _auth_rate_limit_store: dict[str, list[float]] = defaultdict(list)
 _auth_inflight_store: dict[str, int] = {}
-BT_RATE_LIMIT_PER_MINUTE = int(os.environ.get("BT_RATE_LIMIT_PER_MINUTE", "120"))
+BT_RATE_LIMIT_PER_MINUTE = int(os.environ.get("BT_RATE_LIMIT_PER_MINUTE", "300"))
 BT_RATE_LIMIT_RETRY_AFTER = int(os.environ.get("BT_RATE_LIMIT_RETRY_AFTER", "10"))
 BT_AUTH_RATE_LIMIT_PER_MINUTE = int(
     os.environ.get("BT_AUTH_RATE_LIMIT_PER_MINUTE", "300")
@@ -1302,7 +1303,10 @@ def before_request_hook():
                     "error": "authentication_unavailable",
                     "request_id": request.request_id,
                 }), 503
-            authenticated_key = f"authenticated:{identity.subject}"
+            if identity.subject == "legacy-anonymous":
+                authenticated_key = f"authenticated:legacy-anonymous:{_client_ip()}"
+            else:
+                authenticated_key = f"authenticated:{identity.subject}"
             request.auth_subject = identity.subject
             request.auth_roles = identity.roles
             request.rate_limit_key = authenticated_key
@@ -1317,7 +1321,7 @@ def before_request_hook():
     # Skip CORS preflights too: an OPTIONS would otherwise burn 2x budget per
     # real cross-origin request, and a 429 on a preflight surfaces as a cryptic
     # CORS error in the browser instead of a rate limit the frontend can honor.
-    if request.method != "OPTIONS" and request.path not in ("/health", "/ready", "/metrics", "/ping", "/stats"):
+    if request.method != "OPTIONS" and request.path not in ("/health", "/ready", "/metrics", "/ping", "/stats", "/tts/status"):
         rate_limit_key = getattr(request, "rate_limit_key", _client_ip())
         if not _check_rate_limit(rate_limit_key):
             _record_outcome("api_rate_limited")
@@ -2485,6 +2489,54 @@ def feedback_summary():
         "summary": summary,
         "request_id": getattr(request, "request_id", None),
     })
+
+
+
+# ── Text-to-Speech (Speaches Kokoro) ───────────────────────────────────────
+
+
+@app.route("/tts/status", methods=["GET"])
+def tts_status():
+    """Return health and model info for the local Speaches TTS engine."""
+    return jsonify(TTS_SERVICE.check_health())
+
+
+@app.route("/tts/synthesize", methods=["POST"])
+def tts_synthesize():
+    """Synthesize text into high-fidelity neural MP3 audio via Speaches Kokoro.
+
+    JSON payload:
+      text (str, required): Text to synthesize (max 5000 chars)
+      lang (str, optional): Target language for voice selection
+      voice (str, optional): Explicit Kokoro voice override
+      speed (float, optional): Speech rate multiplier (0.5 to 2.0)
+    """
+    if not TTS_SERVICE.is_enabled:
+        return jsonify({"error": "tts_disabled", "message": "TTS backend is disabled"}), 400
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "invalid_payload", "message": "text is required"}), 400
+    if len(text) > 5000:
+        return jsonify({"error": "text_too_long", "message": "text exceeds 5000 characters"}), 400
+    lang = data.get("lang")
+    voice = data.get("voice")
+    speed = float(data.get("speed", 1.0))
+    try:
+        audio_bytes, content_type = TTS_SERVICE.synthesize(
+            text, lang=lang, voice=voice, speed=speed
+        )
+        return Response(
+            audio_bytes,
+            mimetype=content_type,
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "Content-Length": str(len(audio_bytes)),
+            },
+        )
+    except Exception as exc:
+        log.error("TTS synthesis error: %s", exc)
+        return jsonify({"error": "tts_error", "message": str(exc)}), 502
 
 
 class CleanupCredentialUnavailable(RuntimeError):

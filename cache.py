@@ -649,7 +649,6 @@ class CacheStore:
         except Exception:
             conn.rollback()
             raise
-        self._secure_files()
 
     def _delete_expired(self, conn: sqlite3.Connection) -> int:
         cursor = conn.execute(

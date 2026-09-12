@@ -84,6 +84,8 @@
     border: 1px solid rgba(255, 255, 255, 0.12);
     user-select: none;
     overflow: hidden;            /* clip the progress bar to the rounded corners */
+    contain: layout style;
+    will-change: transform;
     transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
@@ -406,3 +408,4 @@ html[data-bt-preset="large"] .bt-translation { line-height: 1.8; }
     }
     .bt-translation { opacity: 0.95; }
 }
+

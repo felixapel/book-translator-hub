@@ -1234,7 +1234,7 @@ def _translate_anthropic(
 # intentionally finite; zero/negative values fail startup instead of silently
 # disabling the control.
 BT_MAX_UPSTREAM_INFLIGHT = int(os.environ.get("BT_MAX_UPSTREAM_INFLIGHT", "2"))
-BT_UPSTREAM_QUEUE_TIMEOUT = float(os.environ.get("BT_UPSTREAM_QUEUE_TIMEOUT", "2"))
+BT_UPSTREAM_QUEUE_TIMEOUT = float(os.environ.get("BT_UPSTREAM_QUEUE_TIMEOUT", "15"))
 BT_REQUEST_MAX_ATTEMPTS = int(os.environ.get("BT_REQUEST_MAX_ATTEMPTS", "20"))
 BT_REQUEST_MAX_INPUT_BYTES = int(os.environ.get("BT_REQUEST_MAX_INPUT_BYTES", "5000000"))
 BT_REQUEST_MAX_OUTPUT_TOKENS = int(os.environ.get("BT_REQUEST_MAX_OUTPUT_TOKENS", "163840"))
