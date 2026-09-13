@@ -120,11 +120,7 @@
 #bt-bar[data-mode="bilingual"] #bt-toggle .bt-dot { background: var(--bt-bilingual); }
 #bt-bar[data-mode="translated"] #bt-toggle .bt-dot { background: var(--bt-translated); }
 
-/* Speech controls (speak/pause toggle + stop) */
-#bt-speak, #bt-stop { padding: 6px 9px; font-size: 14px; line-height: 1; }
-#bt-speak[aria-pressed="true"] { background: rgba(255, 255, 255, 0.18); }
-#bt-stop:disabled { opacity: 0.35; cursor: default; }
-#bt-stop:disabled:hover { background: transparent; }
+
 
 /* Language select */
 #bt-lang {
@@ -409,3 +405,16 @@ html[data-bt-preset="large"] .bt-translation { line-height: 1.8; }
     .bt-translation { opacity: 0.95; }
 }
 
+
+/* Target language directional indicator */
+.bt-target-arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.65);
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0 1px 0 2px;
+    pointer-events: none;
+    user-select: none;
+}

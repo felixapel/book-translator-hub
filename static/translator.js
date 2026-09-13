@@ -79,7 +79,20 @@
         if (presetBar) presetBar.dataset.preset = preset;
     }
 
-    let SOURCE_LANG = bookPrefGet('bt_source_lang') || cfg.sourceLang || 'English';
+    let SOURCE_LANG_SETTING = bookPrefGet('bt_source_lang') || cfg.sourceLang || 'Auto';
+    let detectedSourceLang = null;
+
+    function resolveEffectiveSourceLang(doc) {
+        if (SOURCE_LANG_SETTING !== 'Auto' && availableLangCodes.has(SOURCE_LANG_SETTING)) {
+            return SOURCE_LANG_SETTING;
+        }
+        if (!detectedSourceLang && doc) {
+            detectedSourceLang = detectBookLanguage(doc);
+        }
+        return detectedSourceLang || 'English';
+    }
+
+    let SOURCE_LANG = resolveEffectiveSourceLang(null);
 
     // Map browser language codes to the full language name the backend expects
     // (used only to pick a sensible default target on first run).
@@ -290,8 +303,6 @@
     function newGeneration() {
         generation++;
         invalidateParagraphsCache();
-        // A chapter/page/language/mode turn invalidates queued speech too.
-        try { ttsStop(); } catch (e) { /* speech may be unavailable */ }
         rateLimitResponses.clear();
         if (prefetchWaitWake) prefetchWaitWake();
         for (const c of activeControllers) {
@@ -592,6 +603,17 @@
     if (!availableLangCodes.has(SOURCE_LANG)) SOURCE_LANG = 'English';
     if (!availableLangCodes.has(TARGET_LANG)) TARGET_LANG = defaultLang;
 
+    function sourceLanguageOptions(selected, detected) {
+        const autoLabel = detected
+            ? `${t.autoDetect || 'Auto (detect)'} — ${detected}`
+            : (t.autoDetect || 'Auto (detect)');
+        const autoSelected = (selected === 'Auto' || !selected) ? ' selected' : '';
+        const autoOption = `<option value="Auto"${autoSelected}>${autoLabel}</option>`;
+        return `<optgroup label="Auto">${autoOption}</optgroup>` +
+            `<optgroup label="${t.topLanguages}">${TOP_LANGUAGES.map(l => `<option value="${l.code}"${l.code === selected ? ' selected' : ''}>${l.name === l.code ? l.code : `${l.name} — ${l.code}`}</option>`).join('')}</optgroup>` +
+            `<optgroup label="${t.allLanguages}">${MORE_LANGUAGES.map(l => `<option value="${l.code}"${l.code === selected ? ' selected' : ''}>${l.code} — ${l.name}</option>`).join('')}</optgroup>`;
+    }
+
     function languageOptions(selected) {
         const option = (language, englishFirst) => {
             const label = language.name === language.code ? language.code
@@ -794,14 +816,13 @@
                 `<span class="bt-dot"></span>` +
                 `<span id="bt-toggle-label">${translationMode === 'bilingual' ? t.bilingual : translationMode === 'translated' ? t.translated : t.off}</span>` +
             `</button>` +
-            `<select id="bt-lang" title="${t.langHint}" aria-label="${t.langHint}">${langOptions}</select>` +
+            `<span class="bt-target-arrow" title="${t.targetLabel || 'Destino'}" aria-hidden="true">→</span>` +
+            `<select id="bt-lang" title="${t.targetLabel || 'Destino'}: ${t.langHint}" aria-label="${t.targetLabel || 'Destino'}">${langOptions}</select>` +
             `<div id="bt-status" role="status" aria-live="polite" aria-atomic="true">` +
                 `<span id="bt-spinner"></span>` +
                 `<span id="bt-status-text"></span>` +
             `</div>` +
             `<button type="button" id="bt-gear" title="${t.settings}" aria-label="${t.settings}" aria-haspopup="dialog" aria-controls="bt-menu" aria-expanded="false">⚙</button>` +
-            `<button type="button" id="bt-speak" title="${t.ttsSpeak}" aria-label="${t.ttsSpeak}" aria-pressed="false">▶</button>` +
-            `<button type="button" id="bt-stop" title="${t.ttsStop}" aria-label="${t.ttsStop}" disabled>■</button>` +
             `<div id="bt-progress" role="progressbar" aria-label="${t.translatingChapter}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="bt-progress-fill"></div></div>`;
 
         document.body.appendChild(bar);
@@ -831,44 +852,35 @@
             setMode(next);
         };
 
-        const sel = document.getElementById('bt-lang');
-        sel.onchange = (e) => {
-            persistCacheNow();            // flush current language's cache before switching
-            TARGET_LANG = e.target.value;
+        function setTargetLanguage(newLang) {
+            if (!availableLangCodes.has(newLang) || newLang === TARGET_LANG) return;
+            persistCacheNow();
+            TARGET_LANG = newLang;
             localStorage.setItem('bt_lang', TARGET_LANG);
             bookPrefRemember('bt_lang', TARGET_LANG);
-            newGeneration();              // abort in-flight old-language requests
-            translatedParagraphs = loadCacheForLang(TARGET_LANG); // restore that language's work
+
+            const barSel = document.getElementById('bt-lang');
+            if (barSel && barSel.value !== TARGET_LANG) barSel.value = TARGET_LANG;
+            const menuSel = document.getElementById('bt-menu-target-lang');
+            if (menuSel && menuSel.value !== TARGET_LANG) menuSel.value = TARGET_LANG;
+
+            newGeneration();
+            translatedParagraphs = loadCacheForLang(TARGET_LANG);
             if (translationMode !== 'off') {
                 removeAllTranslations();
                 translateCurrentPage();
             }
+            buildMenu();
             refreshStatus();
-        };
+        }
+
+        const sel = document.getElementById('bt-lang');
+        sel.onchange = (e) => setTargetLanguage(e.target.value);
 
         const gear = document.getElementById('bt-gear');
         gear.onclick = (e) => { e.stopPropagation(); toggleMenu(); };
 
-        // Text-to-speech controls: speak queues the chapter paragraphs,
-        // the same button pauses/resumes while speaking, stop cancels.
-        // Hidden where the Web Speech API is unavailable.
-        const speakBtn = document.getElementById('bt-speak');
-        const stopBtn = document.getElementById('bt-stop');
-        if (!ttsSupported()) {
-            if (speakBtn) speakBtn.style.display = 'none';
-            if (stopBtn) stopBtn.style.display = 'none';
-        } else {
-            if (speakBtn) {
-                speakBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    if (ttsSpeaking) ttsPauseResume();
-                    else ttsSpeakAll();
-                };
-            }
-            if (stopBtn) {
-                stopBtn.onclick = (e) => { e.stopPropagation(); ttsStop(); };
-            }
-        }
+
         // Close on outside click (anywhere not on the bar or the menu)...
         document.addEventListener('click', (e) => {
             if (menu.classList.contains('bt-open') && !bar.contains(e.target) && !menu.contains(e.target)) {
@@ -945,8 +957,10 @@
             `<div class="bt-menu-row"><span>${t.modeLabel}</span><span class="bt-menu-val">${modeLabel}</span></div>` +
             `<label class="bt-menu-field" for="bt-source-lang"><span>${t.sourceLabel}</span>` +
                 `<select id="bt-source-lang" class="bt-menu-select" title="${t.sourceLangHint}" aria-label="${t.sourceLangHint}">` +
-                    `${languageOptions(SOURCE_LANG)}</select></label>` +
-            `<div class="bt-menu-row"><span>${t.targetLabel}</span><span class="bt-menu-val">${esc(TARGET_LANG)}</span></div>` +
+                    `${sourceLanguageOptions(SOURCE_LANG_SETTING, detectedSourceLang)}</select></label>` +
+            `<label class="bt-menu-field" for="bt-menu-target-lang"><span>${t.targetLabel}</span>` +
+                `<select id="bt-menu-target-lang" class="bt-menu-select" title="${t.langHint}" aria-label="${t.langHint}">` +
+                    `${languageOptions(TARGET_LANG)}</select></label>` +
             `<label class="bt-menu-field" for="bt-style-preset"><span>${t.stylePreset}</span>` +
                 `<select id="bt-style-preset" class="bt-menu-select" aria-label="${t.stylePreset}">` +
                     `<option value="default"${stylePreset === 'default' ? ' selected' : ''}>${t.presetDefault}</option>` +
@@ -1011,18 +1025,28 @@
         });
 
         const sourceSelect = menu.querySelector('#bt-source-lang');
-        sourceSelect.onchange = (event) => {
-            persistCacheNow();
-            SOURCE_LANG = event.target.value;
-            localStorage.setItem('bt_source_lang', SOURCE_LANG);
-            bookPrefRemember('bt_source_lang', SOURCE_LANG);
-            newGeneration();
-            translatedParagraphs = loadCacheForLang(TARGET_LANG);
-            removeAllTranslations();
-            if (translationMode !== 'off') translateCurrentPage();
-            buildMenu();
-            refreshStatus();
-        };
+        if (sourceSelect) {
+            sourceSelect.onchange = (event) => {
+                persistCacheNow();
+                SOURCE_LANG_SETTING = event.target.value;
+                localStorage.setItem('bt_source_lang', SOURCE_LANG_SETTING);
+                bookPrefRemember('bt_source_lang', SOURCE_LANG_SETTING);
+                SOURCE_LANG = resolveEffectiveSourceLang(getReaderDoc());
+                newGeneration();
+                translatedParagraphs = loadCacheForLang(TARGET_LANG);
+                removeAllTranslations();
+                if (translationMode !== 'off') translateCurrentPage();
+                buildMenu();
+                refreshStatus();
+            };
+        }
+
+        const targetSelect = menu.querySelector('#bt-menu-target-lang');
+        if (targetSelect) {
+            targetSelect.onchange = (event) => {
+                setTargetLanguage(event.target.value);
+            };
+        }
 
         menu.querySelectorAll('.bt-menu-item').forEach(item => {
             item.onclick = (e) => {
@@ -1221,233 +1245,97 @@
         toast._btHide = setTimeout(() => toast.classList.remove('bt-toast-visible'), 2600);
     }
 
-    // ── Text-to-Speech (Web Speech API) ────────────────────────────────
-    // Reads the chapter paragraphs aloud in reading order through the
-    // browser speechSynthesis queue. Translated text is preferred; the
-    // original is the fallback until its translation arrives. Every queued
-    // item carries its own language so the utterance voice matches the
-    // spoken text (target language for translations, source otherwise).
-    const BT_TTS_LANG_CODES = {
-        'English': 'en-US', 'Chinese': 'zh-CN', 'Chinese (Traditional)': 'zh-TW',
-        'Hindi': 'hi-IN', 'Spanish': 'es-ES', 'French': 'fr-FR', 'Arabic': 'ar-SA',
-        'Bengali': 'bn-BD', 'Portuguese': 'pt-PT', 'Russian': 'ru-RU', 'Urdu': 'ur-PK',
-        'Afrikaans': 'af-ZA', 'Albanian': 'sq-AL', 'Amharic': 'am-ET', 'Aymara': 'ay-BO',
-        'Basque': 'eu-ES', 'Bosnian': 'bs-BA', 'Bulgarian': 'bg-BG', 'Burmese': 'my-MM',
-        'Catalan': 'ca-ES', 'Cebuano': 'ceb-PH', 'Chewa': 'ny-MW', 'Croatian': 'hr-HR',
-        'Czech': 'cs-CZ', 'Danish': 'da-DK', 'Dutch': 'nl-NL', 'Esperanto': 'eo',
-        'Estonian': 'et-EE', 'Finnish': 'fi-FI', 'Gaelic': 'gd-GB', 'Galician': 'gl-ES',
-        'Ganda': 'lg-UG', 'German': 'de-DE', 'Greek': 'el-GR', 'Guarani': 'gn-PY',
-        'Gujarati': 'gu-IN', 'Hausa': 'ha-NG', 'Hawaiian': 'haw-US', 'Hebrew': 'he-IL',
-        'Hungarian': 'hu-HU', 'Icelandic': 'is-IS', 'Igbo': 'ig-NG', 'Indonesian': 'id-ID',
-        'Italian': 'it-IT', 'Japanese': 'ja-JP', 'Javanese': 'jv-ID', 'Kannada': 'kn-IN',
-        'Kazakh': 'kk-KZ', 'Khmer': 'km-KH', 'Korean': 'ko-KR', 'Kyrgyz': 'ky-KG',
-        'Lao': 'lo-LA', 'Latin': 'la', 'Latvian': 'lv-LV', 'Lingala': 'ln-CD',
-        'Lithuanian': 'lt-LT', 'Macedonian': 'mk-MK', 'Maithili': 'mai-IN', 'Malagasy': 'mg-MG',
-        'Malay': 'ms-MY', 'Malayalam': 'ml-IN', 'Maori': 'mi-NZ', 'Marathi': 'mr-IN',
-        'Mongolian': 'mn-MN', 'Nahuatl': 'nah-MX', 'Navajo': 'nv-US', 'Nepali': 'ne-NP',
-        'Norwegian': 'nb-NO', 'Odia': 'or-IN', 'Oromo': 'om-ET', 'Pashto': 'ps-AF',
-        'Persian': 'fa-IR', 'Polish': 'pl-PL', 'Punjabi': 'pa-IN', 'Quechua': 'qu-PE',
-        'Romanian': 'ro-RO', 'Samoan': 'sm-WS', 'Serbian': 'sr-RS', 'Shona': 'sn-ZW',
-        'Sindhi': 'sd-PK', 'Sinhala': 'si-LK', 'Slovak': 'sk-SK', 'Slovenian': 'sl-SI',
-        'Somali': 'so-SO', 'Sundanese': 'su-ID', 'Swahili': 'sw-KE', 'Swedish': 'sv-SE',
-        'Tagalog': 'tl-PH', 'Tajik': 'tg-TJ', 'Tamil': 'ta-IN', 'Telugu': 'te-IN',
-        'Thai': 'th-TH', 'Tibetan': 'bo-CN', 'Turkish': 'tr-TR', 'Turkmen': 'tk-TM',
-        'Ukrainian': 'uk-UA', 'Uzbek': 'uz-UZ', 'Vietnamese': 'vi-VN', 'Welsh': 'cy-GB',
-        'Xhosa': 'xh-ZA', 'Yoruba': 'yo-NG', 'Zulu': 'zu-ZA'
+    // ── Language Normalization & Auto-Detection ────────────────────────
+    const ISO_TO_VALID_LANG = {
+        'en': 'English', 'eng': 'English',
+        'es': 'Spanish', 'spa': 'Spanish',
+        'fr': 'French', 'fra': 'French', 'fre': 'French',
+        'de': 'German', 'deu': 'German', 'ger': 'German',
+        'it': 'Italian', 'ita': 'Italian',
+        'pt': 'Portuguese', 'por': 'Portuguese',
+        'ru': 'Russian', 'rus': 'Russian',
+        'zh': 'Chinese', 'zho': 'Chinese', 'chi': 'Chinese',
+        'ja': 'Japanese', 'jpn': 'Japanese',
+        'ko': 'Korean', 'kor': 'Korean',
+        'ar': 'Arabic', 'ara': 'Arabic',
+        'hi': 'Hindi', 'hin': 'Hindi',
+        'nl': 'Dutch', 'nld': 'Dutch', 'dut': 'Dutch',
+        'pl': 'Polish', 'pol': 'Polish',
+        'tr': 'Turkish', 'tur': 'Turkish',
+        'uk': 'Ukrainian', 'ukr': 'Ukrainian',
+        'cs': 'Czech', 'ces': 'Czech', 'cze': 'Czech',
+        'sv': 'Swedish', 'swe': 'Swedish',
+        'el': 'Greek', 'ell': 'Greek', 'gre': 'Greek',
+        'ro': 'Romanian', 'ron': 'Romanian', 'rum': 'Romanian',
+        'hu': 'Hungarian', 'hun': 'Hungarian',
+        'da': 'Danish', 'dan': 'Danish',
+        'fi': 'Finnish', 'fin': 'Finnish',
+        'no': 'Norwegian', 'nor': 'Norwegian',
+        'bg': 'Bulgarian', 'bul': 'Bulgarian',
+        'sk': 'Slovak', 'slk': 'Slovak', 'slo': 'Slovak',
+        'he': 'Hebrew', 'heb': 'Hebrew',
+        'id': 'Indonesian', 'ind': 'Indonesian',
+        'vi': 'Vietnamese', 'vie': 'Vietnamese',
+        'th': 'Thai', 'tha': 'Thai',
+        'ca': 'Catalan', 'cat': 'Catalan',
+        'eu': 'Basque', 'eus': 'Basque', 'baq': 'Basque',
+        'gl': 'Galician', 'glg': 'Galician',
+        'lv': 'Latvian', 'lav': 'Latvian',
+        'et': 'Estonian', 'est': 'Estonian',
+        'hr': 'Croatian', 'hrv': 'Croatian',
+        'sr': 'Serbian', 'srp': 'Serbian',
+        'lt': 'Lithuanian', 'lit': 'Lithuanian',
+        'sl': 'Slovenian', 'slv': 'Slovenian',
+        'la': 'Latin', 'lat': 'Latin',
+        'fa': 'Persian', 'fas': 'Persian', 'per': 'Persian',
+        'bn': 'Bengali', 'ben': 'Bengali',
+        'ur': 'Urdu', 'urd': 'Urdu'
     };
 
-    let ttsSpeaking = false;
-    let ttsPaused = false;
-    let speachesAudio = null;
-    let speachesQueue = [];
-    let speachesIndex = 0;
+    function bcp47ToValidLanguage(code) {
+        if (!code || typeof code !== 'string') return null;
+        const clean = code.trim().toLowerCase();
+        if (ISO_TO_VALID_LANG[clean]) return ISO_TO_VALID_LANG[clean];
+        const primary = clean.split(/[-_]/)[0];
+        if (ISO_TO_VALID_LANG[primary]) return ISO_TO_VALID_LANG[primary];
+        for (const lang of availableLangs) {
+            if (lang.code.toLowerCase() === clean) return lang.code;
+        }
+        return null;
+    }
 
-    function ttsSupported() {
+    function detectBookLanguage(doc) {
         try {
-            return typeof window !== 'undefined'
-                && (typeof Audio !== 'undefined' || (!!window.speechSynthesis && !!window.SpeechSynthesisUtterance));
-        } catch (e) { return false; }
-    }
-
-    function ttsLangCodeFor(languageName) {
-        if (Object.prototype.hasOwnProperty.call(BT_TTS_LANG_CODES, languageName)) {
-            return BT_TTS_LANG_CODES[languageName];
-        }
-        return 'en-US';
-    }
-
-    function ttsPickVoice(langCode) {
-        try {
-            const synth = window.speechSynthesis;
-            if (!synth || typeof synth.getVoices !== 'function') return null;
-            const voices = synth.getVoices() || [];
-            const wanted = String(langCode).toLowerCase();
-            const prefix = wanted.split('-')[0];
-            return voices.find(v => String(v.lang || '').toLowerCase() === wanted)
-                || voices.find(v => String(v.lang || '').toLowerCase().split('-')[0] === prefix)
-                || null;
-        } catch (e) { return null; }
-    }
-
-    function ttsCollectTexts() {
-        const items = [];
-        for (const el of getParagraphs()) {
-            const original = getParagraphText(el);
-            if (!original) continue;
-            const hash = cacheKeyForText(original, elementContextId(el));
-            const translated = translatedParagraphs[hash];
-            if (!isBadTranslation(translated) && translated) {
-                items.push({ text: translated, lang: TARGET_LANG });
-            } else {
-                items.push({ text: original, lang: SOURCE_LANG });
-            }
-        }
-        return items;
-    }
-
-    function ttsRefreshButtons() {
-        const speak = document.getElementById('bt-speak');
-        if (speak) {
-            const active = ttsSpeaking && !ttsPaused;
-            speak.textContent = active ? '⏸' : '▶';
-            const label = active ? t.ttsPause : ttsPaused ? t.ttsResume : t.ttsSpeak;
-            speak.title = label;
-            speak.setAttribute('aria-label', label);
-            speak.setAttribute('aria-pressed', active ? 'true' : 'false');
-        }
-        const stop = document.getElementById('bt-stop');
-        if (stop) stop.disabled = !ttsSpeaking;
-    }
-
-    function ttsStop() {
-        if (speachesAudio) {
-            try { speachesAudio.pause(); } catch (e) {}
-            if (speachesAudio.src && speachesAudio.src.startsWith("blob:")) {
-                try { URL.revokeObjectURL(speachesAudio.src); } catch (e) {}
-            }
-            speachesAudio = null;
-        }
-        speachesQueue = [];
-        speachesIndex = 0;
-        try {
-            const synth = window.speechSynthesis;
-            if (synth && typeof synth.cancel === 'function') synth.cancel();
-        } catch (e) { /* speech unsupported — ignore */ }
-        ttsSpeaking = false;
-        ttsPaused = false;
-        ttsRefreshButtons();
-    }
-
-    function ttsPauseResume() {
-        if (!ttsSupported() || !ttsSpeaking) return;
-        if (speachesAudio) {
-            if (ttsPaused) {
-                try { speachesAudio.play(); } catch (e) {}
-                ttsPaused = false;
-            } else {
-                try { speachesAudio.pause(); } catch (e) {}
-                ttsPaused = true;
-            }
-        } else {
-            try {
-                if (ttsPaused) {
-                    window.speechSynthesis.resume();
-                    ttsPaused = false;
-                } else {
-                    window.speechSynthesis.pause();
-                    ttsPaused = true;
-                }
-            } catch (e) { /* speech unsupported — ignore */ }
-        }
-        ttsRefreshButtons();
-    }
-
-    function ttsFallbackSpeak(items) {
-        const synth = window.speechSynthesis;
-        if (!synth) { ttsStop(); return; }
-        try { synth.cancel(); } catch (e) { /* ignore */ }
-        items.forEach((item, idx) => {
-            const utterance = new window.SpeechSynthesisUtterance(item.text);
-            const code = ttsLangCodeFor(item.lang);
-            utterance.lang = code;
-            const voice = ttsPickVoice(code);
-            if (voice) utterance.voice = voice;
-            if (idx === items.length - 1) {
-                utterance.onend = ttsStop;
-                utterance.onerror = ttsStop;
-            }
-            synth.speak(utterance);
-        });
-    }
-
-    async function ttsPlaySpeachesNext() {
-        if (!ttsSpeaking || speachesIndex >= speachesQueue.length) {
-            ttsStop();
-            return;
-        }
-        const item = speachesQueue[speachesIndex];
-        try {
-            const res = await fetch(API_BASE + '/tts/synthesize', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: item.text, lang: item.lang })
-            });
-            if (!res.ok) throw new Error('Speaches HTTP ' + res.status);
-            const blob = await res.blob();
-            if (!ttsSpeaking) return;
-            const audioUrl = URL.createObjectURL(blob);
-            speachesAudio = new Audio(audioUrl);
-            speachesAudio.onended = () => {
-                URL.revokeObjectURL(audioUrl);
-                speachesAudio = null;
-                speachesIndex++;
-                ttsPlaySpeachesNext();
-            };
-            speachesAudio.onerror = () => {
-                URL.revokeObjectURL(audioUrl);
-                speachesAudio = null;
-                speachesIndex++;
-                ttsPlaySpeachesNext();
-            };
-            await speachesAudio.play();
-        } catch (err) {
-            console.warn('Speaches TTS playback fallback:', err);
-            // Fallback remaining items to browser synth
-            const remaining = speachesQueue.slice(speachesIndex);
-            speachesQueue = [];
-            ttsFallbackSpeak(remaining);
-        }
-    }
-
-    async function ttsSpeakAll() {
-        if (!ttsSupported()) { showToast(t.ttsUnsupported); return; }
-        ttsStop();
-        const items = ttsCollectTexts();
-        if (items.length === 0) { showToast(t.ttsEmpty); return; }
-        ttsSpeaking = true;
-        ttsPaused = false;
-        ttsRefreshButtons();
-
-        let useSpeaches = false;
-        try {
-            const probe = await fetch(API_BASE + '/tts/status');
-            if (probe.ok) {
-                const info = await probe.json();
-                if (info && info.enabled && info.status === 'ready') {
-                    useSpeaches = true;
+            const reader = (typeof window !== 'undefined') && (window.reader || window.book);
+            if (reader) {
+                const pkgMeta = reader.package && reader.package.metadata;
+                const rawLang = (pkgMeta && (pkgMeta.language || pkgMeta.lang))
+                    || (reader.metadata && (reader.metadata.language || reader.metadata.lang));
+                if (rawLang) {
+                    const langStr = Array.isArray(rawLang) ? rawLang[0] : (typeof rawLang === 'object' ? (rawLang.value || rawLang.code) : rawLang);
+                    const matched = bcp47ToValidLanguage(String(langStr));
+                    if (matched) return matched;
                 }
             }
-        } catch (e) {
-            useSpeaches = false;
-        }
-
-        if (useSpeaches && typeof Audio !== 'undefined') {
-            speachesQueue = items;
-            speachesIndex = 0;
-            ttsPlaySpeachesNext();
-        } else {
-            ttsFallbackSpeak(items);
-        }
+            if (doc) {
+                const rootLang = doc.documentElement && (doc.documentElement.getAttribute('xml:lang') || doc.documentElement.getAttribute('lang') || doc.documentElement.lang);
+                if (rootLang) {
+                    const matched = bcp47ToValidLanguage(rootLang);
+                    if (matched) return matched;
+                }
+                const bodyLang = doc.body && (doc.body.getAttribute('xml:lang') || doc.body.getAttribute('lang'));
+                if (bodyLang) {
+                    const matched = bcp47ToValidLanguage(bodyLang);
+                    if (matched) return matched;
+                }
+                const metaLang = doc.querySelector && doc.querySelector('meta[name*="language" i], meta[http-equiv="content-language" i]');
+                if (metaLang && metaLang.getAttribute('content')) {
+                    const matched = bcp47ToValidLanguage(metaLang.getAttribute('content'));
+                    if (matched) return matched;
+                }
+            }
+        } catch (e) { /* ignore detection errors */ }
+        return null;
     }
 
     // ── DOM Helpers ────────────────────────────────────────────────────
@@ -2388,6 +2276,17 @@
         
         const myGen = generation;
         const idoc = getReaderDoc();
+        if (idoc) {
+            const detected = detectBookLanguage(idoc);
+            if (detected && detected !== detectedSourceLang) {
+                detectedSourceLang = detected;
+                if (SOURCE_LANG_SETTING === 'Auto') {
+                    SOURCE_LANG = detected;
+                    const sourcePicker = document.getElementById('bt-source-lang');
+                    if (sourcePicker) sourcePicker.innerHTML = sourceLanguageOptions(SOURCE_LANG_SETTING, detectedSourceLang);
+                }
+            }
+        }
         if (idoc && READER_TYPE === 'cwa') {
             ensureIframeStyles(idoc);
             applyIframeTheme(idoc);
@@ -2922,8 +2821,7 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         // beforeunload does not fire; persistCacheNow is idempotent.
         window.addEventListener('beforeunload', persistCacheNow);
         window.addEventListener('pagehide', persistCacheNow);
-        window.addEventListener('pagehide', ttsStop);
-        // Offline-first: stop issuing network work while offline (inflight
+            // Offline-first: stop issuing network work while offline (inflight
         // requests abort into failedParagraphs, queues stay queued), then
         // clear the failure marks and resume on reconnect. Persisted
         // translations keep rendering throughout.

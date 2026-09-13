@@ -31,7 +31,7 @@ RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requireme
 
 # Copy only runtime modules; tests, benchmarks, and operator helpers do not
 # belong in the published execution artifact.
-COPY auth.py btctl_core.py cache.py epub_export.py feedback.py glossary.py hub_runtime.py reader_session.py server.py singleflight.py translator.py tts.py work_budget.py ./
+COPY auth.py btctl_core.py cache.py epub_export.py feedback.py glossary.py hub_runtime.py reader_session.py server.py singleflight.py translator.py work_budget.py ./
 COPY VERSION ./
 COPY static/loader.js static/translator.css static/translator.js ./static/
 COPY proxy/nginx-main.conf proxy/nginx.conf.template proxy/render_config.py ./proxy/
@@ -70,10 +70,6 @@ ENV BT_MAX_CONCURRENT="2"
 ENV BT_TIMEOUT="60"
 # Paragraphs per LLM call — >1 is much faster on slow models (1 = legacy).
 ENV BT_BATCH_SIZE="5"
-ENV BT_TTS_BACKEND="speaches"
-ENV BT_TTS_URL="http://192.168.0.122:6521/v1"
-ENV BT_TTS_MODEL="speaches-ai/Kokoro-82M-v1.0-ONNX"
-ENV BT_TTS_DEFAULT_VOICE="af_heart"
 
 # 8390 = translation API. 8080 = injection proxy. BT_ROLE selects api, proxy,
 # or the backwards-compatible combined mode. EXPOSE is documentation only.
