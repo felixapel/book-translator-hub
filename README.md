@@ -31,6 +31,7 @@
 - **Zero-Wait Directional Lookahead:** Intelligently pre-translates upcoming pages along the reader's directional trajectory for an instantaneous 0ms page-turn experience.
 - **High-Capacity IndexedDB Cache:** Stores thousands of translated paragraphs offline directly in the browser (`BookTranslatorDB`), bypassing standard 5MB `localStorage` limitations.
 - **High-Throughput SQLite WAL Engine:** Server-side cache tuned with 256MB memory-mapping (`mmap_size`) and 64MB RAM page cache for **sub-millisecond (<0.5ms)** lookups.
+- **Intelligent Language Engine & Seamless UX:** Automatic source language detection from EPUB metadata/HTML (with manual override in Settings), plus an interactive target language dropdown with directional indicator (`→`) right on the floating toolbar.
 - **Dedicated E-Ink Mode:** 1-bit high-contrast layout without animations, blurring, or drop shadows, perfectly optimized for e-readers (Kindle, Kobo, Onyx Boox).
 - **Universal Multi-Reader Support:** Seamless native integration with stock [Calibre-Web-Automated](https://github.com/crocodilestick/Calibre-Web-Automated) and pinned [Kavita](https://github.com/Kareadita/Kavita) EPUB readers without altering either upstream image.
 - **Zero-Trust Privacy & Security:** Keeps all LLM API tokens and server endpoints strictly isolated on the internal network; no client-side credential leakage.
@@ -213,3 +214,4 @@ Support is optional through [Ko-fi](https://ko-fi.com/felixapel) or
 affiliated with or endorsed by CWA, Kavita, Calibre, Google or any LLM provider.
 
 See [LICENSE](LICENSE) for the license text.
+

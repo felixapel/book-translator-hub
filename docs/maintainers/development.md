@@ -76,8 +76,8 @@ The rate-limit probe and benchmark modules hit a **live** API
 token-mode command above before running them. The rate-limit probe requires a
 fresh limiter window and valid authentication.
 It sends same-language requests, so it exercises authentication and admission
-without calling the configured translation provider. Its default 130 probes
-cover the default limit of 120; raise `--requests` if your deployment uses a
+without calling the configured translation provider. Its default 310 probes
+cover the default limit of 300; raise `--requests` if your deployment uses a
 higher `BT_RATE_LIMIT_PER_MINUTE`:
 
 ```bash
@@ -189,3 +189,4 @@ For Kavita, use stock v0.9.0.2 through the managed HTTPS origin. Open the exact
 navigation, then navigate to manga, PDF and library pages and confirm the
 toolbar and observers are removed. Test native login and, when supported by the
 target deployment, stock OIDC login. Do not use private book text in evidence.
+

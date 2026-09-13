@@ -1,13 +1,9 @@
 # Community Applications on Unraid
 
 Community Applications is the simplest supported profile when a searchable CWA
-Translate listing exists. It runs one combined non-root container that proxies
-stock CWA and keeps the translation API private inside the container.
-
-This profile is CWA-only. It does not accept Kavita variables, routes or
-authentication. Install Kavita with the recommended
-[universal hub](universal-hub.md), or use its advanced split-role
-[`btctl` guide](kavita.md); do not repurpose the CWA template or share appdata.
+or Kavita listing exists. It runs one combined non-root container (`BT_ROLE=all`)
+that proxies stock Calibre-Web Automated, Kavita, or both, while publishing the
+direct translation and SSE streaming API port (`8390`) alongside the reader proxy (`8385`).
 
 If the listing is absent, its template does not pin an immutable digest, or the
 host is outside the certified scope, use the source-built
@@ -22,7 +18,7 @@ mutable `latest` image.
 - Local OpenAI-compatible `/v1/chat/completions` provider.
 - One combined `BT_ROLE=all` container running as `101:102` with private mode
   `0700` appdata.
-- Host port `8385` maps to proxy port `8080`; API port `8390` is not published.
+- Host port `8385` maps to proxy port `8080`; direct API and SSE streaming port `8390` is published.
 - An image reference pinned by immutable `sha256` digest.
 
 Other versions or topologies may work but are not release-certified. Authentik
@@ -77,3 +73,4 @@ On the exact installed digest:
 The release runbook requires this physical acceptance before a new template is
 announced or submitted. See the [compatibility matrix](../reference/compatibility.md)
 and [troubleshooting guide](../operations/troubleshooting.md).
+

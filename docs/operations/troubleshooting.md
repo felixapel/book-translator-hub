@@ -95,7 +95,7 @@ cookie. Sign out and back into CWA, then verify the browser sends the CWA
 session cookie to the same public origin.
 
 CWA with `config_session=1` binds that session to both the address it observed
-at login and the browser `User-Agent`. The managed v2.2 proxy deliberately
+at login and the browser `User-Agent`. The managed proxy deliberately
 overwrites `X-Forwarded-For` with one observed address on the CWA and API paths,
 and the API replays that same address and `User-Agent` to the auth probe. Check
 that all reader traffic—including login—uses the managed proxy, that no other
@@ -178,8 +178,11 @@ reviewed fragment with:
 
 ## Toolbar loads but translation fails
 
-- Source and target must differ. Choose the book language in Settings and the
-  output language in the toolbar.
+- Source and target must differ. The source language is automatically detected
+  from book metadata or HTML attributes (and can be manually overridden in Settings).
+  The target language is chosen via the interactive dropdown selector with directional
+  arrow (`→`) on the floating toolbar (or within Settings, keeping both synchronized).
+  If source and target resolve to the same language, translation is bypassed.
 - In DevTools Network, inspect the JSON error from `/bt-api/translate/batch`.
   The browser should call a same-origin relative route, not a host API port.
 - Inside Docker, `localhost` means the API container. Set `BT_LOCAL_URL` to an
@@ -393,3 +396,4 @@ reverse proxy compression and script injection attributes:
    PDFs, and library overview pages are intentionally ignored to prevent overhead.
 3. **Check DevTools Console:** Ensure no error like `unsupported reader version contract`
    is logged.
+

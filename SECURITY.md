@@ -9,7 +9,7 @@ Only the latest release (and `main`) receives security fixes.
 Please report vulnerabilities privately via **GitHub Security Advisories**
 ("Report a vulnerability" on the repository's Security tab) rather than a
 public issue. If that form is unavailable, email
-`felixguillermoapel@gmail.com` with the subject `eBook Translate security report`.
+`felixguillermoapel@gmail.com` with the subject `Book Translator Hub security report`.
 Do not include credentials, session cookies, book text, or provider keys unless
 we explicitly arrange a safe transfer. You should get a first response within
 7 days.
@@ -38,3 +38,4 @@ we explicitly arrange a safe transfer. You should get a first response within
   one-way source/scope hashes, not source paragraphs, raw identities, or reader
   credentials. Provider prompts still leave the host when a cloud provider is
   configured; see the fallback/privacy warning in the configuration guide.
+

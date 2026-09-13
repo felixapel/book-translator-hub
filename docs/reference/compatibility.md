@@ -10,7 +10,7 @@ Anything else is not a promise until its acceptance checks are added.
 | Component | Status | Boundary |
 |---|---|---|
 | CWA 4.x | Contract-supported, Tier 1 | An exact stable version and matching running image tag/label are required. The release reference is CWA `4.0.6`; a future 4.x UI change still requires browser acceptance before promotion. |
-| CWA 3.1.4 | Legacy migration only | Accepted only as the source of `btctl upgrade`; it is not a fresh v2.2 runtime target. |
+| CWA 3.1.4 | Legacy migration only | Accepted only as the source of `btctl upgrade`; it is not a fresh v2.4 runtime target. |
 | Other CWA 3.x or pre-release/mutable tags | Rejected | `btctl plan` fails before a production-image build or deployment mutation. A stock-host bootstrap may still warm ordinary Docker build cache. |
 | Stock CWA container | Required | The managed proxy-injection topology does not replace templates, mount overlay files into CWA, or own the CWA container. |
 
@@ -93,3 +93,4 @@ release guarantee. Before declaring it supported, add a reproducible test or
 record the exact host, reader tag and commit, browser, edge, LLM server,
 commands, and results
 in the deployment acceptance evidence.
+

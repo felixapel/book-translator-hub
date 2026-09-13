@@ -36,7 +36,7 @@ officially represents the project in public.
 ## Enforcement
 
 Report abusive, harassing, or otherwise unacceptable behavior privately to
-`felixguillermoapel@gmail.com` with the subject `CWA Translate conduct report`.
+`felixguillermoapel@gmail.com` with the subject `Book Translator Hub conduct report`.
 Reports will be reviewed promptly and kept confidential as far as reasonably
 possible. The maintainer will use a proportionate response, from correction or
 warning through temporary or permanent exclusion. Do not use this address for
@@ -46,3 +46,4 @@ ordinary support; use GitHub Issues or Discussions instead.
 
 This Code is adapted from the [Contributor Covenant, version
 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct.html).
+

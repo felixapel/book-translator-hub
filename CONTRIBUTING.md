@@ -1,4 +1,4 @@
-# Contributing to eBook Translate
+# Contributing to Book Translator Hub
 
 Thanks for helping improve the project. Keep changes narrow, explain the user
 problem, and include a regression test for behavior changes.
@@ -69,3 +69,4 @@ reviewed diff. Do not hand-edit generated requirement locks.
 For bugs, use the issue template and begin with `./btctl doctor --json` on
 managed installs. Security reports belong in the private channel described in
 `SECURITY.md`, never a public issue.
+

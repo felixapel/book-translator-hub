@@ -20,5 +20,6 @@ What workaround do you use today? What should explicitly remain out of scope?
 
 ## Environment or compatibility constraints
 
-List relevant CWA, Unraid/host, browser, authentication, and LLM details. Do not
+List relevant reader (Calibre-Web / Kavita), Unraid/host, browser, authentication, and LLM details. Do not
 include credentials, cookies, provider keys, private book text, or full logs.
+

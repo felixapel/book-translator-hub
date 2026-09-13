@@ -55,7 +55,7 @@ translation/cache/provider core. There are three deployment profiles:
    inbound forwarding headers are discarded, the observed peer becomes the
    only forwarded client hop, and reader uploads have an operator-configurable
    finite body cap.
-3. **Community Applications combined profile (listing-gated).** One non-root
+4. **Community Applications combined profile (listing-gated).** One non-root
    container runs `BT_ROLE=all`, exposes only its proxy port and keeps API port
    `8390` private. This is production-supported only when the searchable
    listing pins a certified immutable image digest and the host matches the
@@ -116,6 +116,11 @@ cannot detach an active API container from its bind source.
   rendition hooks (`relocated`, `rendered`). Kavita discovers only the current
   `.book-content`, derives book/chapter cache scope from numeric route segments,
   observes Angular DOM replacement and tears down on navigation.
+- **Floating Controls & Language UX**: Draggable floating translator interface with boundary
+  clamping and persistent geometry (`localStorage.bt_pos`). Automatic source language detection
+  parsed from book metadata and DOM/HTML attributes with user override capability in Settings. Interactive
+  target language dropdown with directional arrow (`→`) rendered directly on the floating bar,
+  bi-directionally synchronized with the Settings dialog.
 - **Translation Management**: Coordinates Instant Viewport Rush (concurrent
   micro-batches for top 3 visible paragraphs), real-time Server-Sent Events
   (SSE) token streaming for the primary visible paragraph (~160ms TTFT), and
@@ -130,9 +135,10 @@ cannot detach an active API container from its bind source.
   cannot collide.
 
 ### Backend (`book-translator-api`)
-- **Authentication (`auth.py`, `reader_session.py`)**: Fails closed in token,
+- **Authentication & Admission (`auth.py`, `reader_session.py`)**: Fails closed in token,
   managed reader-session, legacy CWA-session, or trusted-forwarded mode before
-  cache/provider work. Native reader proof is isolated to exchange; opaque
+  cache/provider work. Enforces strict client pre-auth rate limits (`BT_AUTH_RATE_LIMIT_PER_MINUTE`)
+  and inflight bounds (`BT_AUTH_MAX_INFLIGHT_PER_CLIENT`). Native reader proof is isolated to exchange; opaque
   sessions are in-memory, bounded and short-lived. Subjects become connector-
   scoped hashes and never expose upstream user ids to cache or metrics.
 - **Flask Server (`server.py`)**: Exposes translation endpoints `/translate`,
@@ -157,3 +163,4 @@ cannot detach an active API container from its bind source.
   both readers or apply isolated per-reader overrides.
   Remote fallback providers require explicit consent on each request; requests
   with different consent policies never share cache lookup or in-flight work.
+

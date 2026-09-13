@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Real-time Server-Sent Events (SSE) token streaming via new endpoint `/translate/stream`: first paragraph tokens stream dynamically into the reader viewport with ~80ms time-to-first-token.
 - High-capacity asynchronous IndexedDB browser cache (`BookTranslatorDB` / `translations_v1`), allowing whole-book offline translation caching without browser `localStorage` 5MB quota constraints.
 - Progressive live text rendering with visual streaming cursor (`bt-streaming-live`) in both bilingual and replacement reading modes.
+- Automatic source language detection parsed dynamically from book metadata and HTML `lang` attributes, with manual fallback override in Settings.
+- Interactive target language selector with directional arrow (`→`) embedded directly on the floating toolbar, bi-directionally synchronized with the Settings dialog.
+- Literary context window (`BT_CONTEXT_WINDOW`): surrounding paragraphs are provided as non-translated context to improve narrative coherence, dialogue tone, and pronoun disambiguation.
+- Integrated EPUB translation export endpoint (`/export/epub`) and persistent translation glossary management endpoints (`/glossary`).
+
+### Removed
+- Complete surgical removal of legacy Text-to-Speech (TTS) subsystems: removed `/tts/status` and `/tts/synthesize` API routes, Speaches backend integration, audio playback buttons (▶, ⏸, ■), and all `BT_TTS_*` environment variables to streamline the runtime exclusively for zero-wait translation.
+
+### Security
+- Hardened pre-authentication rate limiting (`BT_AUTH_RATE_LIMIT_PER_MINUTE=300`) and client concurrency bounding (`BT_AUTH_MAX_INFLIGHT_PER_CLIENT=2`) to prevent connection starvation and brute-force abuse on session exchange endpoints.
 
 ### Performance
 - Zero-wait reading experience: token streaming for paragraph 1 runs in parallel with concurrent micro-batches for paragraphs 2 and 3, eliminating perceived latency completely.
@@ -948,3 +958,4 @@ UI version marker: `2026-06-30-ui-polish-v1`.
 - SQLite SHA-256 fallback cache system.
 - Light/Dark mode integration with CWA internal iframe rendering.
 - `translator.js` client logic for dynamic DOM injection.
+

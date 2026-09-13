@@ -110,14 +110,14 @@ routes. When CWA and Kavita coexist, prove their names, ports, state, data,
 backups and lifecycle operations are isolated. Community Applications
 candidates require their separate digest-pinned CWA-only checklist.
 
-## Kavita promotion sequence
+## Reader connector promotion sequence
 
 Keep audit hardening and a new reader compatibility claim independently
-releasable. Ship the audit corrections in the next unused `2.2.x` patch after
-its normal gates. Introduce Kavita as `2.3.0-rc.1` only after unit, Chromium,
-container and lifecycle gates pass on the exact candidate. Promote `2.3.0`
-only after the physical Kavita checklist above is recorded on that exact code;
-otherwise issue a new release candidate and keep Kavita labeled candidate.
+releasable. Ship audit corrections in the next patch release after
+its normal gates. Introduce any new reader connector as a release candidate only
+after unit, Chromium, container and lifecycle gates pass on the exact candidate. Promote
+to stable only after the physical reader checklist above is recorded on that exact code;
+otherwise issue a new release candidate and retain candidate status.
 Do not add Kavita to Community Applications as part of this sequence.
 
 ## Publish source and mirror
@@ -166,3 +166,4 @@ to conceal a packaging failure.
 - Gitea and GitHub historical `v2.0.0` tag objects intentionally differ. Never
   rewrite either; [ADR-001](../decisions/ADR-001-gitea-release-authority.md)
   records the authority decision.
+

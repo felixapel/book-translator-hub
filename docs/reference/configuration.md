@@ -100,7 +100,11 @@ configuration.
 | `BT_CONTEXT_WINDOW` | `0` | Surrounding paragraphs included as non-translated context. |
 | `BT_TIMEOUT` | `60` | Per-provider-call timeout in seconds. |
 | `BT_MAX_UPSTREAM_INFLIGHT` | `2` | Process-wide provider concurrency cap. |
-| `BT_UPSTREAM_QUEUE_TIMEOUT` | `2` | Wait for a provider slot before `503`. |
+| `BT_UPSTREAM_QUEUE_TIMEOUT` | `15` | Wait for a provider slot before `503`. |
+| `BT_GLOSSARY_MAX_TERMS_IN_PROMPT` | `50` | Maximum matching glossary terms injected into translation prompt. |
+| `BT_MAX_EXPORT_PARAGRAPHS` | `500` | Maximum paragraphs allowed per EPUB export request. |
+| `BT_MAX_EXPORT_TITLE_CHARS` | `200` | Maximum character length for EPUB export titles. |
+| `BT_MAX_EXPORT_TOTAL_CHARS` | `1048576` | Cumulative character budget for EPUB export. |
 | `BT_MAX_UPSTREAM_RESPONSE_BYTES` | `1048576` | Maximum decompressed provider response. |
 | `BT_REQUEST_MAX_ATTEMPTS` | `20` | Total provider calls, including bounded malformed-envelope recovery. |
 | `BT_REQUEST_MAX_INPUT_BYTES` | `5000000` | Cumulative prompt bytes per API request. |
@@ -164,7 +168,7 @@ standalone Compose example accepts the same environment names.
 | `BT_IDENTITY_TRUSTED_PROXIES` | empty | Exact trusted peers for forwarded identity. |
 | `BT_AUTH_RATE_LIMIT_PER_MINUTE` | `300` | Pre-authentication attempts per observed client. |
 | `BT_AUTH_MAX_INFLIGHT_PER_CLIENT` | `2` | Concurrent pre-authentication requests per observed client. |
-| `BT_RATE_LIMIT_PER_MINUTE` | `120` | Successful API requests per authenticated subject. |
+| `BT_RATE_LIMIT_PER_MINUTE` | `300` | Successful API requests per authenticated subject. |
 | `BT_RATE_LIMIT_RETRY_AFTER` | `10` | `Retry-After` value returned on `429`. |
 | `BT_RATE_LIMIT_MAX_CLIENTS` | `10000` | Active limiter-bucket cap. |
 | `BT_TRUSTED_PROXIES` | empty | Reviewed peers allowed to provide observed client context. |
@@ -243,8 +247,9 @@ derive those internal values and their ownership policy.
 | Variable | Default | Purpose |
 |---|---|---|
 | `BT_CLIENT_PREFETCH_GAP_MS` | `1000` | Lookahead prefetch pacing delay to prevent upstream thundering herds. |
-| `BT_MAX_UPSTREAM_INFLIGHT` | `8` | Maximum concurrent requests admitted to local GPU or remote LLM backends. |
+| `BT_MAX_UPSTREAM_INFLIGHT` | `2` | Process-wide provider concurrency cap (can be raised to 4–8 for high-throughput GPU inference). |
 | `BT_CACHE_TTL_DAYS` | `90` | Automatic expiration window for SQLite translation cache entries. |
 | `BT_CACHE_MAX_ENTRIES` | `100000` | Hard cap on total cached segments before oldest entries are pruned. |
 
 The server automatically enables SQLite Write-Ahead Logging (`WAL`) mode with a `256MB` memory-mapped I/O window (`mmap_size = 268435456`) and `64MB` page cache (`cache_size = -64000`), ensuring response times below `0.5ms` for cached hits.
+
