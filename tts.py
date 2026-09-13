@@ -195,10 +195,13 @@ class TtsService:
             log.error("Speaches TTS request failed: %s", exc)
             raise RuntimeError(f"Speaches TTS error: {exc}") from exc
 
-        # Cache in LRU (thread-safe)
+        # Cache in LRU (thread-safe: avoid premature eviction if key exists)
         with self._cache_lock:
-            if len(self._cache) >= self.cache_capacity:
-                self._cache.popitem(last=False)
+            if cache_key in self._cache:
+                self._cache.move_to_end(cache_key)
+            else:
+                if len(self._cache) >= self.cache_capacity:
+                    self._cache.popitem(last=False)
             self._cache[cache_key] = audio_bytes
 
         return audio_bytes, content_type or "audio/mp3"

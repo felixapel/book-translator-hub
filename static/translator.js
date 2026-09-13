@@ -206,22 +206,21 @@
         if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
         if (!PERSIST_CACHE) return;
         try {
-            let keys = Object.keys(translatedParagraphs);
+            let toPersist = translatedParagraphs;
+            const keys = Object.keys(translatedParagraphs);
             if (keys.length > CACHE_MAX_ENTRIES) {
-                // Object string-keys keep insertion order: keep the most recent N.
-                const trimmed = {};
-                for (const k of keys.slice(keys.length - CACHE_MAX_ENTRIES)) trimmed[k] = translatedParagraphs[k];
-                // Note: do NOT overwrite in-memory translatedParagraphs here;
-          // only trim for localStorage persistence to avoid destroying the reading session.
+                // Object string-keys keep insertion order: keep the most recent N for localStorage.
+                toPersist = {};
+                for (const k of keys.slice(keys.length - CACHE_MAX_ENTRIES)) toPersist[k] = translatedParagraphs[k];
             }
-            localStorage.setItem(CACHE_PREFIX + TARGET_LANG, JSON.stringify(translatedParagraphs));
+            localStorage.setItem(CACHE_PREFIX + TARGET_LANG, JSON.stringify(toPersist));
         } catch (e) {
-            // Quota exceeded — drop the oldest half and retry once.
+            // Quota exceeded — drop the oldest half and retry once in localStorage,
+            // preserving in-memory translatedParagraphs for active reading session.
             try {
                 const keys = Object.keys(translatedParagraphs);
                 const trimmed = {};
                 for (const k of keys.slice(Math.floor(keys.length / 2))) trimmed[k] = translatedParagraphs[k];
-                translatedParagraphs = trimmed;
                 localStorage.setItem(CACHE_PREFIX + TARGET_LANG, JSON.stringify(trimmed));
             } catch (e2) { /* give up persisting; in-memory cache still works */ }
         }
@@ -1323,8 +1322,10 @@
     function ttsStop() {
         if (speachesAudio) {
             try { speachesAudio.pause(); } catch (e) {}
-                  if (speachesAudio && speachesAudio.src && speachesAudio.src.startsWith("blob:")) { try { URL.revokeObjectURL(speachesAudio.src); } catch(e) {} }
-      speachesAudio = null;
+            if (speachesAudio.src && speachesAudio.src.startsWith("blob:")) {
+                try { URL.revokeObjectURL(speachesAudio.src); } catch (e) {}
+            }
+            speachesAudio = null;
         }
         speachesQueue = [];
         speachesIndex = 0;
