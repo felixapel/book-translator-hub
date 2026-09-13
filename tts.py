@@ -10,6 +10,7 @@ import collections
 import hashlib
 import json
 import logging
+import threading
 import os
 import urllib.error
 import urllib.request
@@ -97,6 +98,7 @@ class TtsService:
         self.timeout = timeout
         self.cache_capacity = max(16, cache_capacity)
         self._cache: collections.OrderedDict[str, bytes] = collections.OrderedDict()
+        self._cache_lock = threading.Lock()
 
     @classmethod
     def from_env(cls) -> TtsService:
@@ -161,9 +163,10 @@ class TtsService:
             f"{self.model}:{chosen_voice}:{speed:.2f}:{clean_text}".encode("utf-8")
         ).hexdigest()
 
-        if cache_key in self._cache:
-            self._cache.move_to_end(cache_key)
-            return self._cache[cache_key], "audio/mp3"
+        with self._cache_lock:
+            if cache_key in self._cache:
+                self._cache.move_to_end(cache_key)
+                return self._cache[cache_key], "audio/mp3"
 
         speech_url = f"{self.url}/audio/speech"
         payload = {
@@ -192,10 +195,11 @@ class TtsService:
             log.error("Speaches TTS request failed: %s", exc)
             raise RuntimeError(f"Speaches TTS error: {exc}") from exc
 
-        # Cache in LRU
-        if len(self._cache) >= self.cache_capacity:
-            self._cache.popitem(last=False)
-        self._cache[cache_key] = audio_bytes
+        # Cache in LRU (thread-safe)
+        with self._cache_lock:
+            if len(self._cache) >= self.cache_capacity:
+                self._cache.popitem(last=False)
+            self._cache[cache_key] = audio_bytes
 
         return audio_bytes, content_type or "audio/mp3"
 

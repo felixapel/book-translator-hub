@@ -457,8 +457,8 @@ class ReaderSessionBroker:
             return str(user_id)
         except (BrokerRejected, BrokerUnavailable):
             raise
-        except Exception:
-            raise BrokerUnavailable("authentication authority unavailable") from None
+        except Exception as exc:
+            raise BrokerUnavailable("authentication authority unavailable") from exc
         finally:
             if response is not None:
                 try:

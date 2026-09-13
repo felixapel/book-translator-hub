@@ -211,7 +211,8 @@
                 // Object string-keys keep insertion order: keep the most recent N.
                 const trimmed = {};
                 for (const k of keys.slice(keys.length - CACHE_MAX_ENTRIES)) trimmed[k] = translatedParagraphs[k];
-                translatedParagraphs = trimmed;
+                // Note: do NOT overwrite in-memory translatedParagraphs here;
+          // only trim for localStorage persistence to avoid destroying the reading session.
             }
             localStorage.setItem(CACHE_PREFIX + TARGET_LANG, JSON.stringify(translatedParagraphs));
         } catch (e) {
@@ -1322,7 +1323,8 @@
     function ttsStop() {
         if (speachesAudio) {
             try { speachesAudio.pause(); } catch (e) {}
-            speachesAudio = null;
+                  if (speachesAudio && speachesAudio.src && speachesAudio.src.startsWith("blob:")) { try { URL.revokeObjectURL(speachesAudio.src); } catch(e) {} }
+      speachesAudio = null;
         }
         speachesQueue = [];
         speachesIndex = 0;
@@ -2738,6 +2740,7 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
 
         const replacesObservedContent = lastContentIdentity !== null;
         lastContentIdentity = content;
+        invalidateParagraphsCache();
         if (readerObserver) readerObserver.disconnect();
         readerObserver = new MutationObserver((mutations) => {
             if (!readerRouteActive

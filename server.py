@@ -2338,8 +2338,8 @@ def glossary_list():
         return jsonify({"error": str(exc)}), 400
     try:
         entries = glossary_store.list_entries(tenant, book_id)
-    except Exception:
-        log.error("Glossary list failed error_type=%s", "Exception")
+    except Exception as exc:
+        log.error("Glossary list failed error_type=%s", type(exc).__name__)
         return jsonify({
             "error": "glossary_unavailable",
             "request_id": getattr(request, "request_id", None),
@@ -2375,8 +2375,8 @@ def glossary_upsert():
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except Exception:
-        log.error("Glossary write failed error_type=%s", "Exception")
+    except Exception as exc:
+        log.error("Glossary write failed error_type=%s", type(exc).__name__)
         return jsonify({
             "error": "glossary_unavailable",
             "request_id": getattr(request, "request_id", None),
@@ -2408,8 +2408,8 @@ def glossary_delete():
         removed = glossary_store.delete_entry(tenant, book_id, data["source"])
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except Exception:
-        log.error("Glossary delete failed error_type=%s", "Exception")
+    except Exception as exc:
+        log.error("Glossary delete failed error_type=%s", type(exc).__name__)
         return jsonify({
             "error": "glossary_unavailable",
             "request_id": getattr(request, "request_id", None),
@@ -2452,8 +2452,8 @@ def feedback_record():
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except Exception:
-        log.error("Feedback write failed error_type=%s", "Exception")
+    except Exception as exc:
+        log.error("Feedback write failed error_type=%s", type(exc).__name__)
         return jsonify({
             "error": "feedback_unavailable",
             "request_id": getattr(request, "request_id", None),
@@ -2479,8 +2479,8 @@ def feedback_summary():
         return jsonify({"error": str(exc)}), 400
     try:
         summary = feedback_store.get_summary(tenant, book_id)
-    except Exception:
-        log.error("Feedback summary failed error_type=%s", "Exception")
+    except Exception as exc:
+        log.error("Feedback summary failed error_type=%s", type(exc).__name__)
         return jsonify({
             "error": "feedback_unavailable",
             "request_id": getattr(request, "request_id", None),
