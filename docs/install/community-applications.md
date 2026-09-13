@@ -18,7 +18,7 @@ mutable `latest` image.
 - Local OpenAI-compatible `/v1/chat/completions` provider.
 - One combined `BT_ROLE=all` container running as `101:102` with private mode
   `0700` appdata.
-- Host port `8385` maps to proxy port `8080`; direct API and SSE streaming port `8390` is published.
+- Host port `8385` maps to proxy port `8080`; API port `8390` is not published.
 - An image reference pinned by immutable `sha256` digest.
 
 Other versions or topologies may work but are not release-certified. Authentik
