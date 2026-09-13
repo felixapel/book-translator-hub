@@ -197,7 +197,7 @@
         var existing = window.BOOK_TRANSLATOR || {};
         window.BOOK_TRANSLATOR = {
             apiUrl: managedConfig.apiUrl,
-            sourceLang: existing.sourceLang || 'English',
+            sourceLang: existing.sourceLang || 'Auto',
             targetLang: existing.targetLang || '',
             bookId: existing.bookId,
             persistCache: existing.persistCache === true,
@@ -295,3 +295,4 @@
         console.error('[BookTranslator] disabled:', error.message);
     });
 })();
+

@@ -79,20 +79,9 @@
         if (presetBar) presetBar.dataset.preset = preset;
     }
 
-    let SOURCE_LANG_SETTING = bookPrefGet('bt_source_lang') || cfg.sourceLang || 'Auto';
+    let SOURCE_LANG_SETTING = bookPrefGet('bt_source_lang') || (cfg.sourceLang && cfg.sourceLang !== 'English' ? cfg.sourceLang : 'Auto');
     let detectedSourceLang = null;
-
-    function resolveEffectiveSourceLang(doc) {
-        if (SOURCE_LANG_SETTING !== 'Auto' && availableLangCodes.has(SOURCE_LANG_SETTING)) {
-            return SOURCE_LANG_SETTING;
-        }
-        if (!detectedSourceLang && doc) {
-            detectedSourceLang = detectBookLanguage(doc);
-        }
-        return detectedSourceLang || 'English';
-    }
-
-    let SOURCE_LANG = resolveEffectiveSourceLang(null);
+    let SOURCE_LANG = 'English';
 
     // Map browser language codes to the full language name the backend expects
     // (used only to pick a sensible default target on first run).
@@ -600,8 +589,113 @@
 
     const availableLangs = TOP_LANGUAGES.concat(MORE_LANGUAGES);
     const availableLangCodes = new Set(availableLangs.map(language => language.code));
-    if (!availableLangCodes.has(SOURCE_LANG)) SOURCE_LANG = 'English';
     if (!availableLangCodes.has(TARGET_LANG)) TARGET_LANG = defaultLang;
+
+    // ── Language Normalization & Auto-Detection ────────────────────────
+    const ISO_TO_VALID_LANG = {
+        'en': 'English', 'eng': 'English',
+        'es': 'Spanish', 'spa': 'Spanish',
+        'fr': 'French', 'fra': 'French', 'fre': 'French',
+        'de': 'German', 'deu': 'German', 'ger': 'German',
+        'it': 'Italian', 'ita': 'Italian',
+        'pt': 'Portuguese', 'por': 'Portuguese',
+        'ru': 'Russian', 'rus': 'Russian',
+        'zh': 'Chinese', 'zho': 'Chinese', 'chi': 'Chinese',
+        'ja': 'Japanese', 'jpn': 'Japanese',
+        'ko': 'Korean', 'kor': 'Korean',
+        'ar': 'Arabic', 'ara': 'Arabic',
+        'hi': 'Hindi', 'hin': 'Hindi',
+        'nl': 'Dutch', 'nld': 'Dutch', 'dut': 'Dutch',
+        'pl': 'Polish', 'pol': 'Polish',
+        'tr': 'Turkish', 'tur': 'Turkish',
+        'uk': 'Ukrainian', 'ukr': 'Ukrainian',
+        'cs': 'Czech', 'ces': 'Czech', 'cze': 'Czech',
+        'sv': 'Swedish', 'swe': 'Swedish',
+        'el': 'Greek', 'ell': 'Greek', 'gre': 'Greek',
+        'ro': 'Romanian', 'ron': 'Romanian', 'rum': 'Romanian',
+        'hu': 'Hungarian', 'hun': 'Hungarian',
+        'da': 'Danish', 'dan': 'Danish',
+        'fi': 'Finnish', 'fin': 'Finnish',
+        'no': 'Norwegian', 'nor': 'Norwegian',
+        'bg': 'Bulgarian', 'bul': 'Bulgarian',
+        'sk': 'Slovak', 'slk': 'Slovak', 'slo': 'Slovak',
+        'he': 'Hebrew', 'heb': 'Hebrew',
+        'id': 'Indonesian', 'ind': 'Indonesian',
+        'vi': 'Vietnamese', 'vie': 'Vietnamese',
+        'th': 'Thai', 'tha': 'Thai',
+        'ca': 'Catalan', 'cat': 'Catalan',
+        'eu': 'Basque', 'eus': 'Basque', 'baq': 'Basque',
+        'gl': 'Galician', 'glg': 'Galician',
+        'lv': 'Latvian', 'lav': 'Latvian',
+        'et': 'Estonian', 'est': 'Estonian',
+        'hr': 'Croatian', 'hrv': 'Croatian',
+        'sr': 'Serbian', 'srp': 'Serbian',
+        'lt': 'Lithuanian', 'lit': 'Lithuanian',
+        'sl': 'Slovenian', 'slv': 'Slovenian',
+        'la': 'Latin', 'lat': 'Latin',
+        'fa': 'Persian', 'fas': 'Persian', 'per': 'Persian',
+        'bn': 'Bengali', 'ben': 'Bengali',
+        'ur': 'Urdu', 'urd': 'Urdu'
+    };
+
+    function bcp47ToValidLanguage(code) {
+        if (!code || typeof code !== 'string') return null;
+        const clean = code.trim().toLowerCase();
+        if (ISO_TO_VALID_LANG[clean]) return ISO_TO_VALID_LANG[clean];
+        const primary = clean.split(/[-_]/)[0];
+        if (ISO_TO_VALID_LANG[primary]) return ISO_TO_VALID_LANG[primary];
+        for (const lang of availableLangs) {
+            if (lang.code.toLowerCase() === clean) return lang.code;
+        }
+        return null;
+    }
+
+    function detectBookLanguage(doc) {
+        try {
+            const reader = (typeof window !== 'undefined') && (window.reader || window.book);
+            if (reader) {
+                const pkgMeta = reader.package && reader.package.metadata;
+                const rawLang = (pkgMeta && (pkgMeta.language || pkgMeta.lang))
+                    || (reader.metadata && (reader.metadata.language || reader.metadata.lang));
+                if (rawLang) {
+                    const langStr = Array.isArray(rawLang) ? rawLang[0] : (typeof rawLang === 'object' ? (rawLang.value || rawLang.code) : rawLang);
+                    const matched = bcp47ToValidLanguage(String(langStr));
+                    if (matched) return matched;
+                }
+            }
+            if (doc) {
+                const rootLang = doc.documentElement && (doc.documentElement.getAttribute('xml:lang') || doc.documentElement.getAttribute('lang') || doc.documentElement.lang);
+                if (rootLang) {
+                    const matched = bcp47ToValidLanguage(rootLang);
+                    if (matched) return matched;
+                }
+                const bodyLang = doc.body && (doc.body.getAttribute('xml:lang') || doc.body.getAttribute('lang'));
+                if (bodyLang) {
+                    const matched = bcp47ToValidLanguage(bodyLang);
+                    if (matched) return matched;
+                }
+                const metaLang = doc.querySelector && doc.querySelector('meta[name*="language" i], meta[http-equiv="content-language" i]');
+                if (metaLang && metaLang.getAttribute('content')) {
+                    const matched = bcp47ToValidLanguage(metaLang.getAttribute('content'));
+                    if (matched) return matched;
+                }
+            }
+        } catch (e) { /* ignore detection errors */ }
+        return null;
+    }
+
+    function resolveEffectiveSourceLang(doc) {
+        if (SOURCE_LANG_SETTING !== 'Auto' && availableLangCodes.has(SOURCE_LANG_SETTING)) {
+            return SOURCE_LANG_SETTING;
+        }
+        if (!detectedSourceLang && doc) {
+            detectedSourceLang = detectBookLanguage(doc);
+        }
+        return detectedSourceLang || 'English';
+    }
+
+    SOURCE_LANG = resolveEffectiveSourceLang(null);
+    if (!availableLangCodes.has(SOURCE_LANG)) SOURCE_LANG = 'English';
 
     function sourceLanguageOptions(selected, detected) {
         const autoLabel = detected
@@ -1243,99 +1337,6 @@
         requestAnimationFrame(() => toast.classList.add('bt-toast-visible'));
         clearTimeout(toast._btHide);
         toast._btHide = setTimeout(() => toast.classList.remove('bt-toast-visible'), 2600);
-    }
-
-    // ── Language Normalization & Auto-Detection ────────────────────────
-    const ISO_TO_VALID_LANG = {
-        'en': 'English', 'eng': 'English',
-        'es': 'Spanish', 'spa': 'Spanish',
-        'fr': 'French', 'fra': 'French', 'fre': 'French',
-        'de': 'German', 'deu': 'German', 'ger': 'German',
-        'it': 'Italian', 'ita': 'Italian',
-        'pt': 'Portuguese', 'por': 'Portuguese',
-        'ru': 'Russian', 'rus': 'Russian',
-        'zh': 'Chinese', 'zho': 'Chinese', 'chi': 'Chinese',
-        'ja': 'Japanese', 'jpn': 'Japanese',
-        'ko': 'Korean', 'kor': 'Korean',
-        'ar': 'Arabic', 'ara': 'Arabic',
-        'hi': 'Hindi', 'hin': 'Hindi',
-        'nl': 'Dutch', 'nld': 'Dutch', 'dut': 'Dutch',
-        'pl': 'Polish', 'pol': 'Polish',
-        'tr': 'Turkish', 'tur': 'Turkish',
-        'uk': 'Ukrainian', 'ukr': 'Ukrainian',
-        'cs': 'Czech', 'ces': 'Czech', 'cze': 'Czech',
-        'sv': 'Swedish', 'swe': 'Swedish',
-        'el': 'Greek', 'ell': 'Greek', 'gre': 'Greek',
-        'ro': 'Romanian', 'ron': 'Romanian', 'rum': 'Romanian',
-        'hu': 'Hungarian', 'hun': 'Hungarian',
-        'da': 'Danish', 'dan': 'Danish',
-        'fi': 'Finnish', 'fin': 'Finnish',
-        'no': 'Norwegian', 'nor': 'Norwegian',
-        'bg': 'Bulgarian', 'bul': 'Bulgarian',
-        'sk': 'Slovak', 'slk': 'Slovak', 'slo': 'Slovak',
-        'he': 'Hebrew', 'heb': 'Hebrew',
-        'id': 'Indonesian', 'ind': 'Indonesian',
-        'vi': 'Vietnamese', 'vie': 'Vietnamese',
-        'th': 'Thai', 'tha': 'Thai',
-        'ca': 'Catalan', 'cat': 'Catalan',
-        'eu': 'Basque', 'eus': 'Basque', 'baq': 'Basque',
-        'gl': 'Galician', 'glg': 'Galician',
-        'lv': 'Latvian', 'lav': 'Latvian',
-        'et': 'Estonian', 'est': 'Estonian',
-        'hr': 'Croatian', 'hrv': 'Croatian',
-        'sr': 'Serbian', 'srp': 'Serbian',
-        'lt': 'Lithuanian', 'lit': 'Lithuanian',
-        'sl': 'Slovenian', 'slv': 'Slovenian',
-        'la': 'Latin', 'lat': 'Latin',
-        'fa': 'Persian', 'fas': 'Persian', 'per': 'Persian',
-        'bn': 'Bengali', 'ben': 'Bengali',
-        'ur': 'Urdu', 'urd': 'Urdu'
-    };
-
-    function bcp47ToValidLanguage(code) {
-        if (!code || typeof code !== 'string') return null;
-        const clean = code.trim().toLowerCase();
-        if (ISO_TO_VALID_LANG[clean]) return ISO_TO_VALID_LANG[clean];
-        const primary = clean.split(/[-_]/)[0];
-        if (ISO_TO_VALID_LANG[primary]) return ISO_TO_VALID_LANG[primary];
-        for (const lang of availableLangs) {
-            if (lang.code.toLowerCase() === clean) return lang.code;
-        }
-        return null;
-    }
-
-    function detectBookLanguage(doc) {
-        try {
-            const reader = (typeof window !== 'undefined') && (window.reader || window.book);
-            if (reader) {
-                const pkgMeta = reader.package && reader.package.metadata;
-                const rawLang = (pkgMeta && (pkgMeta.language || pkgMeta.lang))
-                    || (reader.metadata && (reader.metadata.language || reader.metadata.lang));
-                if (rawLang) {
-                    const langStr = Array.isArray(rawLang) ? rawLang[0] : (typeof rawLang === 'object' ? (rawLang.value || rawLang.code) : rawLang);
-                    const matched = bcp47ToValidLanguage(String(langStr));
-                    if (matched) return matched;
-                }
-            }
-            if (doc) {
-                const rootLang = doc.documentElement && (doc.documentElement.getAttribute('xml:lang') || doc.documentElement.getAttribute('lang') || doc.documentElement.lang);
-                if (rootLang) {
-                    const matched = bcp47ToValidLanguage(rootLang);
-                    if (matched) return matched;
-                }
-                const bodyLang = doc.body && (doc.body.getAttribute('xml:lang') || doc.body.getAttribute('lang'));
-                if (bodyLang) {
-                    const matched = bcp47ToValidLanguage(bodyLang);
-                    if (matched) return matched;
-                }
-                const metaLang = doc.querySelector && doc.querySelector('meta[name*="language" i], meta[http-equiv="content-language" i]');
-                if (metaLang && metaLang.getAttribute('content')) {
-                    const matched = bcp47ToValidLanguage(metaLang.getAttribute('content'));
-                    if (matched) return matched;
-                }
-            }
-        } catch (e) { /* ignore detection errors */ }
-        return null;
     }
 
     // ── DOM Helpers ────────────────────────────────────────────────────
@@ -2857,4 +2858,6 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         init();
     }
 })();
+
+
 
