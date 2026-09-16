@@ -239,22 +239,28 @@ load_provider_policy
 request_translation() {
     local status
     local payload
+    local origin="${1-http://books.example.test:8385}"
+    local expected_status="${2:-200}"
     payload='{"paragraphs":["first smoke paragraph","second smoke paragraph"],'
     payload+='"source_lang":"English","target_lang":"Spanish",'
     payload+='"book_id":"ca-smoke-book","chapter_id":"chapter-1",'
     payload+="\"provider_policy\":${PROVIDER_POLICY}}"
     status="$(curl -sS -b "$COOKIE_JAR" -H "User-Agent: ${BROWSER_UA}" \
+        -H "Origin: ${origin}" \
         -H 'Content-Type: application/json' \
         --data "$payload" \
         "http://127.0.0.1:${APP_PORT}/bt-api/translate/batch" \
         --output "$RESPONSE_FILE" --write-out '%{http_code}')"
-    if [ "$status" != 200 ]; then
-        echo "combined profile translation returned HTTP ${status}" >&2
+    if [ "$status" != "$expected_status" ]; then
+        echo "combined profile translation returned HTTP ${status}, expected ${expected_status}" >&2
         sed -n '1,10p' "$RESPONSE_FILE" >&2
         return 1
     fi
 }
 
+# Valid reader cookies do not authorize a missing or cross-site write origin.
+request_translation '' 403
+request_translation 'http://untrusted.example.test' 403
 request_translation
 grep -q 'translated:first smoke paragraph' "$RESPONSE_FILE"
 grep -q 'translated:second smoke paragraph' "$RESPONSE_FILE"
