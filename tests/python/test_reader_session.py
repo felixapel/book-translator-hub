@@ -380,7 +380,7 @@ class ReaderSessionBrokerTests(unittest.TestCase):
         issue = broker.exchange(
             {
                 "Origin": "https://books.example.test",
-                "Cookie": "session=one; remember_token=two",
+                "Cookie": "cf_clearance=cloudflare; remember_token=two; session=one",
             },
             self.binding(),
         )
@@ -390,13 +390,50 @@ class ReaderSessionBrokerTests(unittest.TestCase):
             self.calls[0][1]["headers"]["Cookie"],
             "session=one; remember_token=two",
         )
+        calls_before_rejections = len(self.calls)
         with self.assertRaises(BrokerRejected):
-            self.broker(reader_type="cwa", transport=self.transport(b"[]")).exchange(
+            broker.exchange(
                 {
                     "Origin": "https://books.example.test",
-                    "Cookie": "session=one; unrelated=private",
+                    "Cookie": "cf_clearance=cloudflare",
                 },
                 self.binding(),
+            )
+        with self.assertRaises(BrokerRejected):
+            broker.exchange(
+                {
+                    "Origin": "https://books.example.test",
+                    "Authorization": "Bearer leaked",
+                    "Cookie": "session=one",
+                },
+                self.binding(),
+            )
+        with self.assertRaises(BrokerRejected):
+            broker.exchange(
+                {
+                    "Origin": "https://books.example.test",
+                    "Cookie": "__Host-bt-kavita-session=foreign",
+                },
+                self.binding(),
+            )
+        self.assertEqual(len(self.calls), calls_before_rejections)
+
+        rotated = broker.exchange(
+            {
+                "Origin": "https://books.example.test",
+                "Cookie": (
+                    f"__Host-bt-session={issue.token}; "
+                    "__Host-bt-kavita-session=foreign; session=three"
+                ),
+            },
+            self.binding(),
+        )
+
+        self.assertEqual(rotated.token, "B" * 43)
+        self.assertEqual(self.calls[1][1]["headers"]["Cookie"], "session=three")
+        with self.assertRaises(BrokerRejected):
+            broker.authenticate(
+                {"Cookie": f"__Host-bt-session={issue.token}"}, self.binding()
             )
 
     def test_configuration_enforces_https_except_loopback_development(self):

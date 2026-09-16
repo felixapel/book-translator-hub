@@ -343,8 +343,6 @@ class ReaderSessionBroker:
         if self.reader_type == "cwa":
             if authorization or not cookies:
                 raise BrokerRejected("authentication rejected")
-            if any(name not in {"session", "remember_token"} for name in cookies):
-                raise BrokerRejected("authentication rejected")
             ordered = [
                 (name, cookies[name])
                 for name in ("session", "remember_token")
