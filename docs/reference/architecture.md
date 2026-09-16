@@ -22,14 +22,12 @@ translation/cache/provider core. There are three deployment profiles:
    child exit stops the complete container. This simplifies deployment at the
    cost of one shared compromise and restart boundary. See
    [ADR-015](../decisions/ADR-015-universal-reader-hub.md).
-2. **Decoupled reverse proxy architecture (SWAG / master proxy).** The master
-   reverse proxy fronts stock reader instances (CWA, Kavita) directly on their
-   native ports and injects `<script src="/bt-static/loader.js"></script>` via
-   HTTP `sub_filter`. The translation hub operates in pure API mode
-   (`BT_ROLE=api`, `CWA_UPSTREAM=""`) serving `/bt-api/` and static assets under
-   `/bt-static/`. This fully isolates reader uptime from translator lifecycle
-   and eliminates redundant internal proxy worker overhead. See
-   [ADR-018](../decisions/ADR-018-decoupled-reverse-proxy-and-draggable-controls.md).
+2. **External reverse-proxy integration (not managed or certified).** An
+   operator-controlled proxy may front the stock reader and inject the loader,
+   but direct routing to an API role is outside the managed topology. It must
+   preserve the exact HTTPS, same-origin, session, header-stripping and browser
+   acceptance boundary before it can be promoted. See
+   [ADR-019](../decisions/ADR-019-managed-proxy-boundaries.md).
 3. **Managed split profile (`btctl`, advanced isolation).** Two isolated non-root
    containers run the same release image with `BT_ROLE=proxy` and
    `BT_ROLE=api`. nginx sits in front of a **stock** CWA or pinned Kavita
@@ -48,7 +46,8 @@ translation/cache/provider core. There are three deployment profiles:
    and `docker-entrypoint.sh`.
 
    In managed native-reader mode, raw reader proof is forwarded only to exact
-   `POST /bt-api/session`. `reader_session.py` allowlists CWA cookies, a Kavita
+   `POST /bt-api/session`. `reader_session.py` forwards only selected CWA
+   cookies and ignores ambient cookies, or accepts a Kavita
    native access bearer, or exact Kavita OIDC cookie chunks and validates the
    pinned account endpoint. It persists none of that proof. The response is a
    random, HttpOnly, SameSite-strict plugin cookie valid for at most five
@@ -124,18 +123,15 @@ cannot detach an active API container from its bind source.
   parsed from book metadata and DOM/HTML attributes with user override capability in Settings. Interactive
   target language dropdown with directional arrow (`→`) rendered directly on the floating bar,
   bi-directionally synchronized with the Settings dialog.
-- **Translation Management**: Coordinates Instant Viewport Rush (concurrent
-  micro-batches for top 3 visible paragraphs), real-time Server-Sent Events
-  (SSE) token streaming for the primary visible paragraph (~160ms TTFT), and
-  Zero-Wait Directional Lookahead prefetching. Background whole-chapter prefetch
-  is managed through a bounded, non-secret server-owned browser contract. Only
-  explicit pre-provider admission `429`s are replayed automatically.
-- **Client Cache**: Dual-layer architecture combining instant in-memory maps,
-  synchronous `localStorage` preference settings, and high-capacity asynchronous
-  `IndexedDB` (`BookTranslatorDB` / `translations_v1`) for whole-book offline
-  caching without browser quota errors. Keys include release, languages, book,
-  chapter, and stable DOM position so repeated text in different literary contexts
-  cannot collide.
+- **Translation Management**: Prioritizes visible paragraphs, streams eligible
+  first-paragraph output, and schedules bounded forward lookahead. Provider,
+  model, network and cache state determine observed latency. Only explicit
+  pre-provider admission `429`s are replayed automatically.
+- **Client Cache**: Uses in-memory state and `localStorage` preferences.
+  Optional browser persistence is enabled only by the server-owned browser
+  contract and may be constrained by browser storage. Keys include release,
+  languages, book, chapter, and stable DOM position so repeated text in
+  different literary contexts cannot collide.
 
 ### Backend (`book-translator-api`)
 - **Authentication & Admission (`auth.py`, `reader_session.py`)**: Fails closed in token,

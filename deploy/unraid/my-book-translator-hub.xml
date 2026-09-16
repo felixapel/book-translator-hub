@@ -1,14 +1,14 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>book-translator-hub</Name>
-  <Repository>local/book-translator-hub:2.4.0</Repository>
+  <Repository>local/book-translator-hub:2.4.1</Repository>
   <Registry/>
   <Network>media-net</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
   <Support>https://github.com/felixapel/book-translator-hub/issues</Support>
   <Project>https://github.com/felixapel/book-translator-hub</Project>
-  <Overview>Book Translator Hub v2.4.0 — Universal, zero-wait bilingual reading overlay and translation engine for Calibre-Web, Kavita, and self-hosted ebook libraries powered by local (vLLM/Ollama/Bifrost) or cloud LLMs.</Overview>
+  <Overview>Legacy unsupported API-role example for Book Translator Hub v2.4.1. Do not use this template as a managed deployment: use the documented btctl hub or split lifecycle, which keeps the API private and enforces the reviewed reader-session boundary.</Overview>
   <Category>Tools:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8385]</WebUI>
   <Icon>https://raw.githubusercontent.com/JPDVM2014/icons/35eb799864f41502e741075abfc6457ba0edefd6/calibre-web-logo.png</Icon>

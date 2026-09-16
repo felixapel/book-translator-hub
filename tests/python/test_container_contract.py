@@ -306,7 +306,7 @@ class ContainerContractTests(unittest.TestCase):
         for token in (
             "ARG BUILD_VERSION=dev",
             "ARG BUILD_REVISION=unknown",
-            'org.opencontainers.image.source="https://github.com/felixapel/CWA-eBook-Translate-Plugin"',
+            'org.opencontainers.image.source="https://github.com/felixapel/book-translator-hub"',
             'org.opencontainers.image.licenses="GPL-3.0-only"',
             'org.opencontainers.image.version="$BUILD_VERSION"',
             'org.opencontainers.image.revision="$BUILD_REVISION"',

@@ -5,8 +5,8 @@ WORKDIR /app
 ARG BUILD_VERSION=dev
 ARG BUILD_REVISION=unknown
 LABEL org.opencontainers.image.title="Book Translator Hub" \
-      org.opencontainers.image.description="Universal bilingual LLM translation overlay and engine for Calibre-Web and Kavita" \
-      org.opencontainers.image.source="https://github.com/felixapel/CWA-eBook-Translate-Plugin" \
+      org.opencontainers.image.description="Bilingual LLM translation overlay for stock Calibre-Web-Automated and versioned Kavita EPUB readers" \
+      org.opencontainers.image.source="https://github.com/felixapel/book-translator-hub" \
       org.opencontainers.image.url="https://github.com/felixapel/book-translator-hub" \
       org.opencontainers.image.documentation="https://github.com/felixapel/book-translator-hub#readme" \
       org.opencontainers.image.licenses="GPL-3.0-only" \

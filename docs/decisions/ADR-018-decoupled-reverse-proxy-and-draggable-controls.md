@@ -1,8 +1,9 @@
 # ADR-018: Decoupled reverse proxy architecture and draggable reader controls
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-09-03
 - Amends: [ADR-013](ADR-013-stock-reader-connectors.md), [ADR-015](ADR-015-universal-reader-hub.md)
+- Superseded by: [ADR-019](ADR-019-managed-proxy-boundaries.md)
 
 ## Context
 
@@ -23,7 +24,7 @@ with persistent positioning across page reloads and reading sessions.
 
 ## Decision
 
-1. **Decoupled Reverse Proxy Integration:**
+1. **Decoupled Reverse Proxy Integration (superseded):**
    - The master reverse proxy (SWAG) routes reader traffic directly to stock reader
      backends (`calibre-web-automated` on `:8083`, `Kavita` on `:5000`/`:5547`).
    - The master reverse proxy injects the lightweight client bootstrap loader
@@ -32,8 +33,9 @@ with persistent positioning across page reloads and reading sessions.
    - Translation API calls (`/bt-api/`) and static reader overlay scripts (`/bt-static/`)
      are routed by the master reverse proxy directly to the hub in pure API mode
      (`BT_ROLE=api` on `:8390`).
-   - If `book-translator-hub` is stopped, updated, or offline, core reading and book
-     browsing continue uninterrupted; only translation features degrade gracefully.
+   - This routing pattern is superseded by ADR-019. It did not establish the
+     managed same-origin, session, header-stripping or browser-acceptance
+     boundary required for a supported deployment.
 
 2. **Gunicorn Shared-Memory Heartbeats:**
    - In containerized environments under heavy batch translation workloads, Gunicorn
@@ -50,8 +52,8 @@ with persistent positioning across page reloads and reading sessions.
 
 ## Consequences
 
-- **Fault Tolerance:** Full decoupling ensures 100% reader uptime during translator upgrades.
-- **Resource Optimization:** Pure API mode (`BT_ROLE=api`, `CWA_UPSTREAM=""`) avoids running
-  redundant internal proxy worker pools.
-- **Reliability:** Heartbeats stored in `/dev/shm` prevent spurious worker restarts under high GPU load.
+- **Routing:** The former external reverse-proxy guidance is superseded; it is
+  not a managed or certified deployment topology.
+- **Reliability:** Heartbeats stored in `/dev/shm` avoid filesystem-backed
+  heartbeat contention; normal process and host failure handling still applies.
 - **Client Usability:** Reading overlays are adjustable to reader layouts on both mobile and desktop screens.

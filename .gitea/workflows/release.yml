@@ -46,7 +46,7 @@ jobs:
             --tag "$RELEASE_TAG" \
             --sha "$RELEASE_SHA" \
             --main-ref refs/remotes/origin/main \
-            --mirror-url https://github.com/felixapel/CWA-eBook-Translate-Plugin.git
+            --mirror-url https://github.com/felixapel/book-translator-hub.git
 
   backend:
     needs: preflight

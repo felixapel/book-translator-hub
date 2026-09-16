@@ -339,7 +339,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("fetch-depth: 0", workflow)
         self.assertIn("scripts/release_preflight.py", workflow)
         self.assertIn(
-            "https://github.com/felixapel/CWA-eBook-Translate-Plugin.git",
+            "https://github.com/felixapel/book-translator-hub.git",
             workflow,
         )
         self.assertNotIn("continue-on-error", workflow)

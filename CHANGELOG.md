@@ -7,11 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-09-16
+
+### Changed
+
+- Corrected the public installation, provider-default, compatibility and
+  performance documentation to match the managed local-provider template and
+  bounded runtime contracts.
+- Moved external reverse-proxy guidance to a superseding decision record; it
+  is not a managed or certified deployment topology.
+- Historical performance and offline-cache statements describe the work at the
+  time of those releases; they are not latency, availability or browser-storage
+  guarantees for a new deployment.
+
+### Fixed
+
+- Enforced exact Origin, CSRF and CORS boundaries for managed reader-session
+  exchange, and covered the exact Origin path in the Community Applications
+  smoke gate.
+- Prevented stale translation state across reader navigation, iframe
+  replacement and saved-preference changes.
+- Kept the exact Kavita `0.9.1.4` native-account fixture contract explicit;
+  it does not establish public-browser or OIDC acceptance.
+- Kept hub smoke response headers in a runner-owned temporary file and accepted
+  equivalent Docker tmpfs-size representations during managed hub validation.
+- Pinned patched OpenSSL and libuuid runtime packages.
+
+### Security
+
+- CWA reader-session exchange now ignores ambient browser cookies and forwards
+  only selected CWA authentication cookies to its validation probe.
+
 ## [2.4.0] - 2026-09-05
 
 ### Added
-- Real-time Server-Sent Events (SSE) token streaming via new endpoint `/translate/stream`: first paragraph tokens stream dynamically into the reader viewport with ~80ms time-to-first-token.
-- High-capacity asynchronous IndexedDB browser cache (`BookTranslatorDB` / `translations_v1`), allowing whole-book offline translation caching without browser `localStorage` 5MB quota constraints.
+- Real-time Server-Sent Events (SSE) token streaming via new endpoint
+  `/translate/stream` for progressive first-paragraph rendering; observed
+  latency depends on the provider, model, network and cache state.
+- Optional asynchronous browser persistence (`BookTranslatorDB` /
+  `translations_v1`) when enabled by the server-owned reader configuration and
+  available browser storage.
 - Progressive live text rendering with visual streaming cursor (`bt-streaming-live`) in both bilingual and replacement reading modes.
 - Automatic source language detection parsed dynamically from book metadata and HTML `lang` attributes, with manual fallback override in Settings.
 - Interactive target language selector with directional arrow (`→`) embedded directly on the floating toolbar, bi-directionally synchronized with the Settings dialog.
@@ -19,13 +54,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integrated EPUB translation export endpoint (`/export/epub`) and persistent translation glossary management endpoints (`/glossary`).
 
 ### Removed
-- Complete surgical removal of legacy Text-to-Speech (TTS) subsystems: removed `/tts/status` and `/tts/synthesize` API routes, Speaches backend integration, audio playback buttons (▶, ⏸, ■), and all `BT_TTS_*` environment variables to streamline the runtime exclusively for zero-wait translation.
+- Complete surgical removal of legacy Text-to-Speech (TTS) subsystems: removed `/tts/status` and `/tts/synthesize` API routes, Speaches backend integration, audio playback buttons (▶, ⏸, ■), and all `BT_TTS_*` environment variables to focus the runtime on translation.
 
 ### Security
 - Hardened pre-authentication rate limiting (`BT_AUTH_RATE_LIMIT_PER_MINUTE=300`) and client concurrency bounding (`BT_AUTH_MAX_INFLIGHT_PER_CLIENT=2`) to prevent connection starvation and brute-force abuse on session exchange endpoints.
 
 ### Performance
-- Zero-wait reading experience: token streaming for paragraph 1 runs in parallel with concurrent micro-batches for paragraphs 2 and 3, eliminating perceived latency completely.
+- Token streaming for paragraph 1 and concurrent visible-work micro-batches
+  prioritize progressive rendering; they do not guarantee perceived latency.
 - Network connection reuse and keep-alive streaming adapters for upstream LLM provider calls.
 
 ## [2.3.2] - 2026-09-04
@@ -42,12 +78,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.3.1] - 2026-09-04
 
 ### Added
-- Zero-wait directional lookahead prefetch enabled by default, translating upcoming pages ahead of the reader for an instantaneous 0ms page-turn experience.
+- Bounded directional lookahead prefetch schedules upcoming pages ahead of the
+  reader when enabled; it does not guarantee page-turn latency.
 - Directional paragraph queue sorting: visible viewport first, forward paragraphs next, backward paragraphs last.
 - Instant Time-To-First-Paragraph (TTFT) initial micro-chunking.
 
 ### Performance
-- High-throughput SQLite WAL PRAGMAs: 256MB mmap, 64MB RAM page cache, and in-memory temp tables for sub-millisecond cache lookups.
+- SQLite WAL PRAGMAs: 256MB mmap, 64MB RAM page cache, and in-memory temp
+  tables to reduce cache contention; storage and workload determine latency.
 
 ### Fixed
 

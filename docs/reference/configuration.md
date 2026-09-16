@@ -50,7 +50,7 @@ all enabled-reader allocations without exceeding the total.
 | `BT_DATA_DIR` | Private translation data outside the checkout. |
 | `BT_BACKUP_DIR` | Backup root outside appdata/data. |
 | `BT_UNRAID_TEMPLATE_DIR` | DockerMan user-template directory for the Unraid profile. |
-| `LLM_PROVIDER` | `local`, a fixed named adapter, or `openai-compatible`. The split example defaults to local; the hub example selects Gemini explicitly. |
+| `LLM_PROVIDER` | `local`, a fixed named adapter, or `openai-compatible`. Both managed examples default to local; select a named remote adapter explicitly in the private environment. |
 | `LLM_MODEL` | Provider model identifier. |
 | `BT_LOCAL_URL` | Shared absolute `/v1/chat/completions` endpoint when either role is `local`. |
 | `LLM_API_KEY` | Primary named-provider credential; empty for `local` and `openai-compatible`, which uses its dedicated key variable. |
@@ -250,7 +250,7 @@ filesystem controls. Managed operators set `BT_DATA_DIR`; `btctl` and the image
 derive those internal values and their ownership policy.
 
 
-### Real-Time Streaming and High-Capacity Caching (v2.4.0+)
+### Streaming and caching
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -259,5 +259,8 @@ derive those internal values and their ownership policy.
 | `BT_CACHE_TTL_DAYS` | `90` | Automatic expiration window for SQLite translation cache entries. |
 | `BT_CACHE_MAX_ENTRIES` | `100000` | Hard cap on total cached segments before oldest entries are pruned. |
 
-The server automatically enables SQLite Write-Ahead Logging (`WAL`) mode with a `256MB` memory-mapped I/O window (`mmap_size = 268435456`) and `64MB` page cache (`cache_size = -64000`), ensuring response times below `0.5ms` for cached hits.
+The server enables SQLite Write-Ahead Logging (`WAL`) mode with a `256MB`
+memory-mapped I/O window (`mmap_size = 268435456`) and `64MB` page cache
+(`cache_size = -64000`). These settings reduce contention but do not establish
+a latency guarantee; measure the target storage and workload before tuning.
 
