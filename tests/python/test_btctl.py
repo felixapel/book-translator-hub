@@ -423,7 +423,7 @@ class InstallConfigTests(unittest.TestCase):
 
         for version in ("0.9.0.1", "v0.9.0.2", "0.9.1.0", "latest"):
             with self.subTest(version=version), self.assertRaisesRegex(
-                ConfigError, "certified Kavita"
+                ConfigError, "Kavita reader version is not certified"
             ):
                 InstallConfig.from_mapping(
                     {**values, "BT_READER_VERSION": version}, self.identity
@@ -445,6 +445,35 @@ class InstallConfigTests(unittest.TestCase):
                 InstallConfig.from_mapping(
                     {**values, "BT_READER_IMAGE_ID": image_id}, self.identity
                 )
+
+    def test_kavita_0_9_1_4_preserves_the_old_pair_and_projects_exact_cors(self):
+        values = {
+            **self.base,
+            "BT_INSTALL_NAME": "kavita-translate",
+            "BT_AUTH_PROFILE": "reader-session",
+            "BT_READER_TYPE": "kavita",
+            "BT_READER_UPSTREAM": "http://kavita:5000",
+            "BT_READER_CONTAINER": "kavita",
+            "BT_READER_NETWORK": "kavita_default",
+            "BT_READER_VERSION": "0.9.1.4",
+            "BT_STATE_DIR": "/srv/kavita-translate/state",
+            "BT_DATA_DIR": "/srv/kavita-translate/data",
+            "BT_BACKUP_DIR": "/srv/kavita-translate/backups",
+        }
+        for legacy_name in (
+            "CWA_UPSTREAM", "BT_CWA_CONTAINER", "BT_CWA_NETWORK", "BT_CWA_VERSION"
+        ):
+            values.pop(legacy_name)
+
+        config = InstallConfig.from_mapping(values, self.identity)
+
+        self.assertEqual(config.reader_contract_version, "kavita-0.9.1.4-epub-v1")
+        self.assertEqual(
+            config.api_environment()["BT_ALLOWED_ORIGINS"], "https://books.example.test"
+        )
+        self.assertEqual(
+            config.api_environment()["BT_PUBLIC_ORIGIN"], "https://books.example.test"
+        )
 
     def test_kavita_forbids_cwa_only_inputs_and_non_reader_auth(self):
         base = {

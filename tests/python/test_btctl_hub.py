@@ -167,6 +167,19 @@ class HubBtctlTests(unittest.TestCase):
         self.assertNotIn("fake-test-secret", json.dumps(payload))
         self.assertEqual(payload["resources"]["hub"]["published_ports"], [8385, 8386])
 
+    def test_kavita_0_9_1_4_hub_plan_keeps_the_exact_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            values = hub_values(Path(directory))
+            values["BT_KAVITA_READER_VERSION"] = "0.9.1.4"
+            plan = HubPlan.from_config(
+                HubInstallConfig.from_mapping(values, IDENTITY)
+            )
+
+        self.assertEqual(plan.readers["kavita"]["version"], "0.9.1.4")
+        self.assertEqual(
+            plan.readers["kavita"]["contract"], "kavita-0.9.1.4-epub-v1"
+        )
+
     def test_reader_upstream_must_match_declared_external_container(self):
         with tempfile.TemporaryDirectory() as directory:
             values = hub_values(Path(directory))

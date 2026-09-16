@@ -21,7 +21,9 @@ The project tracks the stable CWA reader contract using the
 
 | Component | Status | Boundary |
 |---|---|---|
-| Stock Kavita 0.9.x (v0.9.0.2 - v0.9.1.4+) | Contract and CI certified | Stock releases `0.9.0.2` through `0.9.1.4+`. Supports both OIDC `reader_session` and direct same-origin proxies (`cwa_session`). Use the [Kavita guide](../install/kavita.md). |
+| Stock Kavita `0.9.0.2` | Contract-supported | This is the managed hub example default and the exact established EPUB connector contract. Use the [Kavita guide](../install/kavita.md). |
+| Stock Kavita `0.9.1.4` | Versioned native-account contract tested | An isolated-container native login/account fixture requires a positive account `id` and matching `kavitaVersion`. It does not establish browser, OIDC or production acceptance. |
+| Other Kavita versions | Not established | Do not treat a `0.9.x` range or a mutable tag as supported. Add an exact versioned contract and the required acceptance checks first. |
 | DRM-free EPUB web reader | Candidate support | Only `/library/:libraryId/series/:seriesId/book/:chapterId` with `.book-content`; translations are a live browser overlay and are not written to Kavita or the EPUB. |
 | Kavita manga, PDF, OPDS, mobile/offline clients and writeback | Rejected or inactive | The loader remains inert on non-EPUB routes. No file mutation or alternate client integration is implemented. |
 | Forked/custom Kavita frontend or authentication plugin | Not certified | The connector targets the stock route, DOM and `/api/Account` behavior only. |
@@ -58,7 +60,8 @@ those exact contracts.
 | Chrome / Edge based on current Chromium | Expected compatible | Run the same public-origin acceptance checklist on the actual client before relying on it. |
 | Firefox and Safari/WebKit | Not yet CI-certified | No release-blocking browser scenario currently proves them; report reproducible issues rather than assuming parity. |
 | DRM-free EPUB in the CWA web reader | Supported | DRM-encrypted content cannot be parsed by CWA or this overlay. |
-| DRM-free EPUB in stock Kavita 0.9.x (v0.9.0.2 - v0.9.1.4+) | CI-certified | Real Chromium covers the exact top-level `.book-content` reader, route-derived scope, navigation teardown and authentication replay. Verified live in production. |
+| DRM-free EPUB in stock Kavita `0.9.0.2` | Contract-supported | The connector targets the exact top-level `.book-content` reader and route-derived scope. Browser acceptance remains an exact candidate and deployment check. |
+| DRM-free EPUB in stock Kavita `0.9.1.4` | Pending browser acceptance | Native account/login behavior is covered by the isolated-container contract fixture; OIDC and public-browser behavior have not been live verified. |
 
 ## Authentication and reverse proxies
 
@@ -66,7 +69,8 @@ those exact contracts.
 |---|---|---|
 | Universal hub reader sessions | Recommended | One container may enable CWA, Kavita or both. Each reader keeps an exact public origin/port and isolated five-minute opaque session cookie. APIs stay on loopback. |
 | Native CWA session, same-origin proxy | Recommended and CI-certified | `BT_AUTH_PROFILE=cwa-session`; CWA v4.0.6 with `config_session=1`, reverse-proxy-header login disabled, and its default `TRUSTED_PROXY_COUNT=1` is covered by unit and container regression fixtures. Selected cookies are exchanged for a five-minute maximum opaque plugin session bound to the proxy-observed address/User-Agent. The API has no host port. Custom trusted-proxy hop counts are not yet certified. |
-| Kavita native bearer or stock OIDC cookie, same-origin proxy | CI-certified candidate | `BT_AUTH_PROFILE=reader-session`; proof reaches only `POST /bt-api/session`, is validated by exact `/api/Account`, then discarded. Ordinary API calls receive only the opaque plugin cookie. Refresh tokens and arbitrary cookies are rejected. HTTPS is required outside loopback. |
+| Kavita native bearer, same-origin proxy | Versioned contract tested | `BT_AUTH_PROFILE=reader-session`; proof reaches only `POST /bt-api/session`, is validated by exact `/api/Account`, then discarded. The isolated `0.9.1.4` fixture requires a positive `id` and `kavitaVersion`. Ordinary API calls receive only the opaque plugin cookie. |
+| Kavita stock OIDC cookie, same-origin proxy | Not live verified for `0.9.1.4` | HTTPS is required outside loopback. Do not promote OIDC support for a new Kavita version until its exact public-browser and native-account checks pass. |
 | Authentik forwarded identity | Managed advanced split-only profile | Requires `docker-edge`, exact `/32` or `/128` edge peer, a patched Authentik version, and the generated direct API route. It is rejected by the hub. See [Authentik](../install/authentik.md). |
 | Nginx edge | Generated and contract-tested | Merge the fragment into the existing HTTPS/Authentik server configuration. SWAG and Nginx Proxy Manager still require product-specific config validation. |
 | Traefik edge | Generated and contract-tested | Existing entrypoint, TLS, certificate, and Authentik settings remain operator-owned. |

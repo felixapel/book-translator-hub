@@ -5,14 +5,18 @@ same `btctl` split deployment as CWA: one stock reader,
 one injection proxy and one private translation API. It does not fork Kavita,
 mount files into its container or write translated text back to the library.
 
-This integration supports stock [Kavita](https://www.kavitareader.com/)
-releases across the `0.9.x` series (including v0.9.0.2 through v0.9.1.4+),
-compatible with both OIDC `reader_session` brokering and direct reverse-proxy
-same-origin configurations.
+This integration accepts only the following exact stock
+[Kavita](https://www.kavitareader.com/) contracts: `0.9.0.2`, the established
+managed default, and `0.9.1.4`, whose native `/api/Account` and broker exchange
+were verified in an isolated container. The `0.9.1.4` fixture requires a
+positive account `id` and matching `kavitaVersion`. It does not verify its
+public-browser or OIDC path. Do not infer support for another `0.9.x` version,
+a mutable tag, or OIDC on `0.9.1.4` from that native fixture.
+
 Only the web EPUB route
 `/library/<libraryId>/series/<seriesId>/book/<chapterId>` and its
 `.book-content` DOM are active. Manga, PDF, OPDS, mobile apps, writeback and
-other Kavita versions are outside the accepted contract.
+custom authentication plugins are outside the accepted contract.
 
 ## Split-profile isolation from CWA
 
@@ -43,6 +47,8 @@ BT_READER_TYPE=kavita
 BT_READER_UPSTREAM=http://kavita:5000
 BT_READER_CONTAINER=kavita
 BT_READER_NETWORK=kavita_default
+# Default established contract. Use 0.9.1.4 only for that exact deployed
+# version; do not substitute a broad 0.9.x value.
 BT_READER_VERSION=0.9.0.2
 BT_READER_IMAGE_ID=sha256:<64 lowercase hex from docker inspect>
 BT_CWA_IDENTITY_HEADER=
@@ -56,7 +62,7 @@ Use the real container and network names. `BT_READER_UPSTREAM` must be exactly
 `http://<BT_READER_CONTAINER>:5000`. HTTPS is mandatory for a non-loopback
 `BT_PUBLIC_ORIGIN`; the session cookie uses the `__Host-` boundary.
 If the container image is tagged `latest`, first verify Kavita itself reports
-exactly `0.9.0.2`, then copy the immutable value from
+the exact value configured in `BT_READER_VERSION`, then copy the immutable value from
 `docker inspect --format '{{.Image}}' <BT_READER_CONTAINER>` into
 `BT_READER_IMAGE_ID`. Installation fails if the running image changes. An exact
 application-version tag or label remains sufficient when no image ID is set.
@@ -70,7 +76,7 @@ Then use the normal lifecycle:
 ```
 
 Review `plan` before installing. It must identify `reader_type` as `kavita`,
-the exact version as `0.9.0.2`, and two resources named from
+the exact `BT_READER_VERSION` selected for this deployment, and two resources named from
 `kavita-translate`. `doctor` must report every check as `ok`.
 
 The provider block is reader-neutral. For a fast cloud backend without a local
@@ -101,9 +107,9 @@ environment `install` and `doctor` sequence instead of running `reconfigure`.
 ## Authentication boundary
 
 Sign in to Kavita through `BT_PUBLIC_ORIGIN`, then open a supported EPUB. The
-loader submits either Kavita's native access token or its exact OIDC session
-cookie only to `POST /bt-api/session`. The API validates that proof against
-Kavita's `/api/Account`, discards it and issues an opaque, `HttpOnly`,
+loader submits Kavita's native access token, or an exact stock OIDC session
+cookie where that path is configured, only to `POST /bt-api/session`. The API
+validates that proof against Kavita's `/api/Account`, discards it and issues an opaque, `HttpOnly`,
 `SameSite=Strict` translator cookie for at most five minutes. Ordinary
 translation routes strip the Kavita bearer token and cookies and accept only
 that plugin cookie. The opaque session is also bound to the proxy-observed
@@ -111,15 +117,16 @@ client address and browser User-Agent.
 
 The native refresh token is never read. No Kavita credential is persisted in
 SQLite, lifecycle state, generated environment files or browser translator
-configuration. OIDC deployments must keep the stock account endpoint reachable
-at the configured internal Kavita upstream; custom authentication plugins are
-not certified.
+configuration. The isolated `0.9.1.4` native exchange does not establish an
+OIDC browser claim. Keep the stock account endpoint reachable at the configured
+internal Kavita upstream; custom authentication plugins are not certified.
 
 ## Browser acceptance
 
 Before relying on the connector:
 
-1. Confirm stock Kavita reports exactly `0.9.0.2` and `doctor` is fully green.
+1. Confirm stock Kavita reports the exact configured `BT_READER_VERSION` and
+   `doctor` is fully green. `0.9.0.2` and `0.9.1.4` are separate contracts.
 2. Record the exact deployed checkout commit and immutable hub image digest,
    then sign in through the configured HTTPS origin. After reinstalling or
    replacing the image, force a hard reload and sign in again because the
@@ -128,7 +135,8 @@ Before relying on the connector:
    `/library/<positive-id>/series/<positive-id>/book/<positive-id>` route.
    In DevTools, verify `GET /bt-config.json` is `200` with
    `Cache-Control: no-store`, the config says `reader_type: kavita` and
-   `reader_version: 0.9.0.2`, and exactly one loader is mounted.
+   `reader_version` equals the configured exact version, and exactly one loader
+   is mounted.
 4. Verify `POST /bt-api/session` returns `200` with the exact Kavita identity
    and an opaque expiry of at most five minutes. The provider key, native
    Kavita token, refresh token and book text must not appear in the response,
@@ -142,8 +150,8 @@ Before relying on the connector:
    network attachment, state/data directories, SQLite database, session key,
    cookie and lifecycle state.
 
-Automated Chromium and real-container gates cover the route, DOM, native-token
-exchange, credential stripping and SPA teardown. Physical stock-Unraid and
-real-Kavita browser acceptance is still required before the Kavita profile is
-promoted from candidate to stable support. Community Applications does not
-install this profile; use `btctl`.
+Automated route, DOM, native-token exchange, credential-stripping and SPA
+teardown checks do not replace physical stock-Unraid and real-Kavita browser
+acceptance for the exact configured version. In particular, `0.9.1.4` OIDC and
+browser behavior are not live verified. Community Applications does not install
+this profile; use `btctl`.

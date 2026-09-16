@@ -61,8 +61,18 @@ _LLM_PROVIDERS = frozenset(
 STATE_SCHEMA_VERSION = 3
 INSTALL_ATTEMPT_SCHEMA_VERSION = 1
 
+# Each Kavita release carries its own browser connector contract. Keep older
+# certified pairs rather than accepting a version range or rewriting state.
+KAVITA_CERTIFIED_CONTRACTS = {
+    "0.9.0.2": "kavita-0.9.0.2-epub-v1",
+    "0.9.1.4": "kavita-0.9.1.4-epub-v1",
+}
 KAVITA_CERTIFIED_VERSION = "0.9.0.2"
 KAVITA_CERTIFIED_COMMIT = "6bcd5689385d0e96824982d843c54f15ce784ddc"
+KAVITA_0_9_1_4_IMAGE_ID = (
+    "sha256:7760764f85ec572c5ed9d9ae3b8269dacfc4cb40fdd3b76b24810f98dcb3447c"
+)
+KAVITA_0_9_1_4_OCI_REVISION = "d77d956b9551227d8be2ee488b08f14aa3a341e5"
 
 _MANAGED_PROXY_HEADERS = frozenset(
     {
@@ -759,12 +769,12 @@ class InstallConfig:
             }:
                 raise ConfigError("CWA requires a supported reader authentication profile")
         else:
-            if reader_version != KAVITA_CERTIFIED_VERSION:
+            reader_contract_version = KAVITA_CERTIFIED_CONTRACTS.get(reader_version)
+            if reader_contract_version is None:
                 raise ConfigError(
-                    "the only certified Kavita version is exactly 0.9.0.2"
+                    "Kavita reader version is not certified"
                 )
             compatibility = "certified"
-            reader_contract_version = "kavita-0.9.0.2-epub-v1"
             if _clean_value(
                 values.get("BT_CWA_IDENTITY_HEADER", ""),
                 "BT_CWA_IDENTITY_HEADER",
@@ -1131,6 +1141,8 @@ class InstallConfig:
             "BT_AUTH_MODE": (
                 "reader_session" if self.uses_reader_session else "forwarded"
             ),
+            "BT_PUBLIC_ORIGIN": self.public_origin,
+            "BT_ALLOWED_ORIGINS": self.public_origin,
             "LLM_PROVIDER": self.llm_provider,
             "LLM_MODEL": self.llm_model,
             "BT_LOCAL_URL": self.local_url,
@@ -1162,7 +1174,6 @@ class InstallConfig:
                     ),
                     "BT_READER_VERSION": self.reader_version,
                     "BT_READER_CONTRACT_VERSION": self.reader_contract_version,
-                    "BT_PUBLIC_ORIGIN": self.public_origin,
                     "BT_TRUSTED_PROXY_HOST": "translator-proxy",
                     "BT_SESSION_KEY_PATH": "/app/data/reader_session_key",
                 }
@@ -1536,11 +1547,12 @@ class DeploymentState:
             raise ConfigError("state resources must be an object")
         if state.reader_type not in _READER_TYPES:
             raise ConfigError("state contains an invalid reader_type")
-        expected_contracts = {
-            "cwa": "cwa-epub-v1",
-            "kavita": "kavita-0.9.0.2-epub-v1",
-        }
-        if state.reader_contract_version != expected_contracts[state.reader_type]:
+        expected_contracts = (
+            {"cwa-epub-v1"}
+            if state.reader_type == "cwa"
+            else set(KAVITA_CERTIFIED_CONTRACTS.values())
+        )
+        if state.reader_contract_version not in expected_contracts:
             raise ConfigError("state contains an invalid reader contract version")
         return state
 

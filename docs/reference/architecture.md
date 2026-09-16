@@ -36,9 +36,12 @@ translation/cache/provider core. There are three deployment profiles:
    instance (`BT_READER_UPSTREAM`). HTML responses get a
    single `<script src="/bt-static/loader.js">` tag injected before `</head>`;
    `loader.js` self-guards to one certified reader route and loads the overlay.
-   CWA uses its `/read/` EPUB route and iframe/EPUB.js adapter. Kavita v0.9.0.2
-   uses the exact `/library/:libraryId/series/:seriesId/book/:chapterId` route
-   and top-level `.book-content` adapter. The API is
+   CWA uses its `/read/` EPUB route and iframe/EPUB.js adapter. Kavita
+   `0.9.0.2` and `0.9.1.4` have separate exact contracts for the
+   `/library/:libraryId/series/:seriesId/book/:chapterId` route and top-level
+   `.book-content` adapter; see the [compatibility matrix](compatibility.md).
+   The `0.9.1.4` native account/broker fixture is isolated-container coverage,
+   not live browser or OIDC acceptance. The API is
    reachable same-origin under `/bt-api/`, so CORS never applies. Because only
    one tag is injected instead of maintaining a reader fork, upstream template
    updates become explicit compatibility events. See `proxy/nginx.conf.template`

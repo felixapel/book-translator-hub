@@ -172,6 +172,35 @@ class ProxyConfigRendererTests(unittest.TestCase):
             },
         )
 
+    def test_kavita_0_9_1_4_requires_and_renders_its_exact_contract(self):
+        result, _, browser_output = self.render({
+            "BT_READER_TYPE": "kavita",
+            "BT_READER_UPSTREAM": "http://kavita:5000",
+            "CWA_UPSTREAM": None,
+            "BT_READER_VERSION": "0.9.1.4",
+            "BT_READER_CONTRACT_VERSION": "kavita-0.9.1.4-epub-v1",
+            "BT_BROWSER_AUTH_MODE": "reader_session",
+            "BT_BROWSER_CREDENTIALS": "same-origin",
+        })
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = json.loads(browser_output.read_text())
+        self.assertEqual(config["readerVersion"], "0.9.1.4")
+        self.assertEqual(config["readerContractVersion"], "kavita-0.9.1.4-epub-v1")
+
+        rejected, output, config_output = self.render({
+            "BT_READER_TYPE": "kavita",
+            "BT_READER_UPSTREAM": "http://kavita:5000",
+            "CWA_UPSTREAM": None,
+            "BT_READER_VERSION": "0.9.1.4",
+            "BT_READER_CONTRACT_VERSION": "kavita-0.9.0.2-epub-v1",
+            "BT_BROWSER_AUTH_MODE": "reader_session",
+            "BT_BROWSER_CREDENTIALS": "same-origin",
+        })
+        self.assertEqual(rejected.returncode, 78)
+        self.assertFalse(output.exists())
+        self.assertFalse(config_output.exists())
+
     def test_browser_batch_controls_are_bounded_and_render_as_numbers(self):
         result, _, browser_output = self.render({
             "BT_BATCH_SIZE": "10",

@@ -322,6 +322,7 @@ class ObservabilityContractTests(unittest.TestCase):
             set(snapshot["outcomes"]),
             {
                 "auth_rejected",
+                "csrf_rejected",
                 "auth_unavailable",
                 "auth_rate_limited",
                 "api_rate_limited",

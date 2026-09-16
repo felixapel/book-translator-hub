@@ -671,11 +671,13 @@ class ServerAuthenticationIntegrationTests(unittest.TestCase):
         self.original_api_rate_limit = server.RATE_LIMIT_MAX
         self.original_rate_client_cap = server.BT_RATE_LIMIT_MAX_CLIENTS
         self.original_origins = server.ALLOWED_ORIGINS
-        self.original_allow_private = server.BT_ALLOW_PRIVATE_LAN
+        self.original_public_origin = server.BT_PUBLIC_ORIGIN
+        server.BT_PUBLIC_ORIGIN = "https://books.example.test"
         server._auth_rate_limit_store.clear()
         server._auth_inflight_store.clear()
         server._rate_limit_store.clear()
         self.client = server.app.test_client()
+        self.client.environ_base["HTTP_ORIGIN"] = server.BT_PUBLIC_ORIGIN
 
     def tearDown(self):
         server.AUTHENTICATOR = self.original_authenticator
@@ -684,7 +686,7 @@ class ServerAuthenticationIntegrationTests(unittest.TestCase):
         server.RATE_LIMIT_MAX = self.original_api_rate_limit
         server.BT_RATE_LIMIT_MAX_CLIENTS = self.original_rate_client_cap
         server.ALLOWED_ORIGINS = self.original_origins
-        server.BT_ALLOW_PRIVATE_LAN = self.original_allow_private
+        server.BT_PUBLIC_ORIGIN = self.original_public_origin
         server._auth_rate_limit_store.clear()
         server._auth_inflight_store.clear()
         server._rate_limit_store.clear()
@@ -1053,8 +1055,7 @@ class ServerAuthenticationIntegrationTests(unittest.TestCase):
             cwa_auth_url="http://calibre-web:8083/ajax/emailstat",
             http_get=lambda *_args, **_kwargs: FakeResponse(),
         )
-        server.ALLOWED_ORIGINS = {"https://books.example.test"}
-        server.BT_ALLOW_PRIVATE_LAN = True
+        server.ALLOWED_ORIGINS = frozenset({"https://books.example.test"})
 
         exact = self.client.get(
             "/ping", headers={"Origin": "https://books.example.test"}
@@ -1069,6 +1070,100 @@ class ServerAuthenticationIntegrationTests(unittest.TestCase):
         self.assertEqual(exact.headers.get("Access-Control-Allow-Credentials"), "true")
         self.assertIn("Origin", exact.headers.get("Vary", ""))
         self.assertIsNone(broad_private.headers.get("Access-Control-Allow-Origin"))
+
+    def test_cookie_authenticated_writes_require_the_exact_public_origin(self):
+        authenticator = self.successful_cwa_authenticator()
+        authenticator.mode = "reader_session"
+        server.AUTHENTICATOR = authenticator
+        server.BT_PUBLIC_ORIGIN = "https://books.example.test"
+        before_rejections = server._metrics["outcomes"]["csrf_rejected"]
+
+        missing = server.app.test_client().post("/feedback", json={})
+        wrong = self.client.post(
+            "/feedback",
+            json={},
+            headers={"Origin": "https://evil.example.test"},
+        )
+        exact = self.client.post(
+            "/feedback",
+            json={},
+            headers={"Origin": "https://books.example.test"},
+        )
+
+        self.assertEqual(missing.status_code, 403)
+        self.assertEqual(wrong.status_code, 403)
+        self.assertEqual(exact.status_code, 400)
+        self.assertEqual(authenticator.authenticate.call_count, 1)
+        self.assertEqual(
+            server._metrics["outcomes"]["csrf_rejected"], before_rejections + 2
+        )
+
+    def test_cookie_authenticated_write_rejects_malformed_non_ascii_origin(self):
+        authenticator = self.successful_cwa_authenticator()
+        authenticator.mode = "reader_session"
+        server.AUTHENTICATOR = authenticator
+        server.BT_PUBLIC_ORIGIN = "https://books.example.test"
+
+        response = self.client.post(
+            "/feedback",
+            json={},
+            headers={"Origin": "https://books.example.t\u00e9st"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        authenticator.authenticate.assert_not_called()
+
+    def test_cookie_authenticated_delete_requires_the_exact_public_origin(self):
+        authenticator = self.successful_cwa_authenticator()
+        authenticator.mode = "reader_session"
+        server.AUTHENTICATOR = authenticator
+        server.BT_PUBLIC_ORIGIN = "https://books.example.test"
+
+        rejected = self.client.delete(
+            "/glossary",
+            json={"source": "term"},
+            headers={"Origin": "https://evil.example.test"},
+        )
+
+        self.assertEqual(rejected.status_code, 403)
+        authenticator.authenticate.assert_not_called()
+
+    def test_token_authenticated_write_keeps_non_browser_client_compatibility(self):
+        authenticator = mock.Mock(mode="token")
+        authenticator.authenticate.return_value = mock.Mock(
+            subject="token:test", roles=frozenset({"operator"})
+        )
+        server.AUTHENTICATOR = authenticator
+
+        response = self.client.post("/feedback", json={})
+
+        self.assertEqual(response.status_code, 400)
+        authenticator.authenticate.assert_called_once()
+
+    def test_cookie_preflight_advertises_delete_only_for_an_exact_origin(self):
+        server.AUTHENTICATOR = mock.Mock(mode="reader_session")
+        server.ALLOWED_ORIGINS = frozenset({"https://books.example.test"})
+
+        exact = self.client.options(
+            "/glossary",
+            headers={
+                "Origin": "https://books.example.test",
+                "Access-Control-Request-Method": "DELETE",
+            },
+        )
+        other = self.client.options(
+            "/glossary",
+            headers={
+                "Origin": "https://evil.example.test",
+                "Access-Control-Request-Method": "DELETE",
+            },
+        )
+
+        self.assertEqual(exact.status_code, 200)
+        self.assertIn("DELETE", exact.headers.get("Access-Control-Allow-Methods", ""))
+        self.assertEqual(exact.headers.get("Access-Control-Allow-Credentials"), "true")
+        self.assertIn("Origin", exact.headers.get("Vary", ""))
+        self.assertIsNone(other.headers.get("Access-Control-Allow-Origin"))
 
 
 if __name__ == "__main__":

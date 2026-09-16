@@ -28,8 +28,10 @@ we explicitly arrange a safe transfer. You should get a first response within
   proxy. In `cwa_session` mode credentialed CORS permits exact configured
   origins only; a private-subnet wildcard is deliberately ignored. The CWA
   probe must target the exact authenticated `/ajax/emailstat` path and return a
-  bounded JSON task list. Browser requests omit cookies entirely in `token` and
-  `forwarded` modes.
+  bounded JSON task list. Browser requests in `token` mode omit credentials.
+  `forwarded` mode uses `credentials: include` so the identity proxy can receive
+  its cookie; it must remain on the configured public origin and the identity
+  proxy remains responsible for validating that cookie.
 - Provider API keys remain in the private server-side environment supplied to
   the container and are never sent to reader configuration or browser storage.
   Protect environment files as secrets, restrict cloud keys to the required API

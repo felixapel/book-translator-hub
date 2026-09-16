@@ -37,6 +37,7 @@ _CONNECTOR_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 _KAVITA_COOKIE = ".AspNetCore.Cookies"
+_KAVITA_CERTIFIED_VERSIONS = frozenset({"0.9.0.2", "0.9.1.4"})
 _MAX_COOKIE_HEADER = 16_384
 _MAX_AUTH_HEADER = 8_192
 _MAX_CHUNKS = 16
@@ -266,7 +267,7 @@ class ReaderSessionBroker:
     ) -> None:
         if reader_type not in {"cwa", "kavita"}:
             raise BrokerConfigError("BT_READER_TYPE must be cwa or kavita")
-        if reader_type == "kavita" and reader_version != "0.9.0.2":
+        if reader_type == "kavita" and reader_version not in _KAVITA_CERTIFIED_VERSIONS:
             raise BrokerConfigError("Kavita reader version is not certified")
         if not isinstance(reader_version, str) or not reader_version:
             raise BrokerConfigError("BT_READER_VERSION is required")
@@ -325,7 +326,9 @@ class ReaderSessionBroker:
 
     def _validate_origin(self, headers: Mapping[str, str]) -> None:
         origin = _header(headers, "Origin")
-        if not origin or not hmac.compare_digest(origin, self.public_origin):
+        # Origin is public request metadata, so ordinary equality is both
+        # sufficient and safe for malformed/non-ASCII input.
+        if not origin or origin != self.public_origin:
             raise BrokerRejected("authentication rejected")
         fetch_site = _header(headers, "Sec-Fetch-Site")
         if fetch_site and fetch_site != "same-origin":

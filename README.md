@@ -144,10 +144,11 @@ their documented boundaries. Do not publish the API, disable authentication,
 or add a route that bypasses the managed proxy. Advanced CWA Authentik
 deployments have a separate fail-closed profile and guide.
 
-CWA is the current stable release target. The stock Kavita v0.9.0.2 EPUB
-connector is contract- and CI-certified in this checkout, but remains a
-candidate until physical Unraid and real-reader browser acceptance is recorded.
-Manga, PDF and library writeback are not supported.
+CWA is the current stable release target. Kavita has separate exact `0.9.0.2`
+and `0.9.1.4` contracts; the `0.9.1.4` native account/broker fixture does not
+establish browser or OIDC acceptance. See the [compatibility matrix](docs/reference/compatibility.md)
+before choosing a reader version. Manga, PDF and library writeback are not
+supported.
 
 ## ⚡ High-Throughput Batching & Model Optimization
 

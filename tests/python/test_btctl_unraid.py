@@ -27,7 +27,7 @@ from btctl_unraid import (
 )
 
 
-def values(root: Path, *, forwarded=False, reader="cwa"):
+def values(root: Path, *, forwarded=False, reader="cwa", reader_version="0.9.0.2"):
     result = {
         "BT_INSTALL_PROFILE": "unraid",
         "BT_INSTALL_NAME": "cwa-translate-test",
@@ -75,7 +75,7 @@ def values(root: Path, *, forwarded=False, reader="cwa"):
                 "BT_READER_UPSTREAM": "http://kavita:5000",
                 "BT_READER_CONTAINER": "kavita",
                 "BT_READER_NETWORK": "kavita_default",
-                "BT_READER_VERSION": "0.9.0.2",
+                "BT_READER_VERSION": reader_version,
                 "BT_CWA_IDENTITY_HEADER": "",
             }
         )
@@ -812,6 +812,19 @@ class UnraidInstallTests(unittest.TestCase):
             docker.containers["kavita"]["Image"] = "sha256:" + "2" * 64
             with self.assertRaisesRegex(InstallError, "reader version"):
                 UnraidInstaller(docker)._preflight(config, plan)
+
+    def test_kavita_0_9_1_4_unraid_plan_keeps_its_exact_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = InstallConfig.from_mapping(
+                values(
+                    Path(directory), reader="kavita", reader_version="0.9.1.4"
+                ),
+                self.identity,
+            )
+            plan = DeploymentPlan.from_config(config)
+
+        self.assertEqual(plan.reader_contract_version, "kavita-0.9.1.4-epub-v1")
+        self.assertEqual(config.api_environment()["BT_PUBLIC_ORIGIN"], config.public_origin)
 
     def test_failure_removes_only_created_roles_and_private_network(self):
         with tempfile.TemporaryDirectory() as directory:

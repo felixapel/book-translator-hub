@@ -184,9 +184,14 @@ Original → Bilingual → Translated, change chapters/pages, and check Light /
 Dark / Sepia themes (translation styling is injected into the reader
 `<iframe>` — see `ensureIframeStyles` in `translator.js`).
 
-For Kavita, use stock v0.9.0.2 through the managed HTTPS origin. Open the exact
-`/library/.../series/.../book/...` EPUB route, exercise translation and chapter
-navigation, then navigate to manga, PDF and library pages and confirm the
-toolbar and observers are removed. Test native login and, when supported by the
-target deployment, stock OIDC login. Do not use private book text in evidence.
+For Kavita, use an exact supported stock version through the managed HTTPS
+origin. `0.9.0.2` and `0.9.1.4` are separate contracts: split smoke retains
+`0.9.0.2` by default, while hub smoke exercises `0.9.1.4` native-account
+coverage. The latter requires a positive `id` and matching `kavitaVersion` in
+the isolated fixture; it is not live browser or OIDC verification. Open the
+exact `/library/.../series/.../book/...` EPUB route, exercise translation and
+chapter navigation, then navigate to manga, PDF and library pages and confirm
+the toolbar and observers are removed. Test native login and, for OIDC, perform
+the version-specific browser check before treating it as supported. Do not use
+private book text in evidence.
 

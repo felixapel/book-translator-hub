@@ -25,6 +25,7 @@ services:
       # Validate the browser's existing HttpOnly CWA session and derive an
       # opaque per-session cache tenant. No credential is stored in JS.
       - BT_AUTH_MODE=cwa_session
+      - BT_PUBLIC_ORIGIN=${BT_PUBLIC_ORIGIN:?Set BT_PUBLIC_ORIGIN to the exact browser-facing origin}
       - BT_CWA_AUTH_URL=http://calibre-web:8083/ajax/emailstat
       - BT_CWA_AUTH_COOKIE_NAMES=session,remember_token
       - BT_CWA_AUTH_TIMEOUT_SECONDS=2

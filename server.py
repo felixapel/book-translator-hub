@@ -386,12 +386,11 @@ def _has_invalid_unicode(value: str) -> bool:
     return False
 
 
-# ── CORS whitelist (H5) ─────────────────────────────────────────────────────
-# Configure with BT_ALLOWED_ORIGINS (comma-separated exact origins, e.g.
-# "https://books.example.com,http://mynas:8083"). BT_ALLOW_PRIVATE_LAN
-# (default true) additionally allows localhost and RFC1918 addresses on any
-# port — the common self-hosted case. Note: in proxy-injection mode the overlay
-# is same-origin and CORS never comes into play.
+# ── CORS and browser-origin boundary ─────────────────────────────────────────
+# BT_ALLOWED_ORIGINS is a comma-separated list of exact serialized HTTP origins.
+# The managed reader proxy is same-origin and needs no CORS grant. If an
+# operator deliberately enables a cross-origin browser client, each origin must
+# be listed explicitly; private-network ranges and wildcards are not origins.
 
 def _validate_cors_origin(origin: str) -> str:
     """Require an exact serialized HTTP origin, never a path or wildcard."""
@@ -420,88 +419,66 @@ def _validate_cors_origin(origin: str) -> str:
     return origin
 
 
-_raw_origins = [
-    o.strip()
-    for o in os.environ.get(
-        "BT_ALLOWED_ORIGINS", "http://localhost:8083,http://localhost:8383"
-    ).split(",")
-    if o.strip()
-]
-_cors_allow_wildcard = "*" in _raw_origins
-ALLOWED_ORIGINS = set()
-for o in _raw_origins:
-    if o == "*":
-        continue
-    try:
-        ALLOWED_ORIGINS.add(_validate_cors_origin(o))
-    except ValueError as exc:
-        log.warning(
-            "Ignoring invalid CORS origin in BT_ALLOWED_ORIGINS: %r (%s)", o, exc
-        )
-
-# Auto-register reader and public origins into CORS whitelist
-def _extract_origin_candidate(url_candidate: str) -> str | None:
-    if not url_candidate or not isinstance(url_candidate, str):
-        return None
-    candidate = url_candidate.strip()
-    if not candidate:
-        return None
-    try:
-        parsed = urlsplit(candidate)
-        if parsed.scheme in ("http", "https") and parsed.hostname:
-            port_part = f":{parsed.port}" if parsed.port else ""
-            host_part = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
-            return f"{parsed.scheme}://{host_part}{port_part}"
-    except Exception:
-        pass
-    return None
-
-for _var_name in (
-    "CWA_URL",
-    "CALIBRE_WEB_URL",
-    "CALIBRE_URL",
-    "CWA_UPSTREAM",
-    "BT_CWA_READER_UPSTREAM",
-    "KAVITA_URL",
-    "KAVITA_UPSTREAM",
-    "BT_KAVITA_READER_UPSTREAM",
-    "BT_READER_UPSTREAM",
-    "BT_PUBLIC_ORIGIN",
-):
-    _cand = os.environ.get(_var_name, "")
-    _origin = _extract_origin_candidate(_cand)
-    if _origin:
-        try:
-            ALLOWED_ORIGINS.add(_validate_cors_origin(_origin))
-        except ValueError:
-            pass
-BT_ALLOW_PRIVATE_LAN = os.environ.get("BT_ALLOW_PRIVATE_LAN", "true").lower() in ("1", "true", "yes")
-_PRIVATE_ORIGIN_RE = re.compile(
-    r"^https?://("
-    r"localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|\[::1\]|"
-    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
-    r"192\.168\.\d{1,3}\.\d{1,3}|"
-    r"172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
-    r")(:\d+)?$"
+_COOKIE_BROWSER_AUTH_MODES = frozenset(
+    {"cwa_session", "reader_session", "forwarded"}
 )
+_UNSAFE_BROWSER_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _configured_cors_origins(value: str) -> frozenset[str]:
+    """Parse exact CORS origins once; a bad config must not silently degrade."""
+    if not isinstance(value, str):
+        raise ValueError("BT_ALLOWED_ORIGINS must be a comma-separated string")
+    if not value:
+        return frozenset()
+    origins: set[str] = set()
+    for origin in value.split(","):
+        # Stripping here would turn an operator typo into a different policy.
+        if not origin or origin != origin.strip() or origin == "*":
+            raise ValueError("BT_ALLOWED_ORIGINS must contain exact http(s) origins")
+        origins.add(_validate_cors_origin(origin))
+    return frozenset(origins)
+
+
+def _configured_public_origin(value: str) -> str:
+    """Return the one browser origin used for cookie-authenticated writes."""
+    try:
+        return _validate_cors_origin(value)
+    except ValueError as exc:
+        raise ValueError(
+            "BT_PUBLIC_ORIGIN must be one exact http(s) origin in browser auth modes"
+        ) from exc
+
+
+ALLOWED_ORIGINS = _configured_cors_origins(
+    os.environ.get("BT_ALLOWED_ORIGINS", "")
+)
+BT_PUBLIC_ORIGIN = ""
+if AUTHENTICATOR.mode in _COOKIE_BROWSER_AUTH_MODES:
+    BT_PUBLIC_ORIGIN = _configured_public_origin(
+        os.environ.get("BT_PUBLIC_ORIGIN", "")
+    )
 
 
 def _is_origin_allowed(origin: str | None) -> str | None:
     """Return the origin if it's allowed, else None."""
     if not origin:
         return None
-    if _cors_allow_wildcard and AUTHENTICATOR.mode not in {"cwa_session", "reader_session"}:
-        return origin
     if origin in ALLOWED_ORIGINS:
         return origin
-    # Credentialed CWA-session requests may never combine cookies with a
-    # subnet-wide origin policy. Cross-origin operators must enumerate the
-    # exact reader origin; same-origin proxy mode needs no CORS at all.
-    if AUTHENTICATOR.mode in {"cwa_session", "reader_session"}:
-        return None
-    if BT_ALLOW_PRIVATE_LAN and _PRIVATE_ORIGIN_RE.match(origin):
-        return origin
     return None
+
+
+def _has_valid_browser_origin() -> bool:
+    """Require an exact same-origin browser write for cookie-backed sessions."""
+    if AUTHENTICATOR.mode not in _COOKIE_BROWSER_AUTH_MODES:
+        return True
+    if not BT_PUBLIC_ORIGIN:
+        return False
+    # Origin is a public routing value, not a secret. Direct equality avoids
+    # compare_digest's Unicode restriction turning malformed request input into
+    # a 500 instead of the required denial.
+    return request.headers.get("Origin", "") == BT_PUBLIC_ORIGIN
 
 
 # ── Rate limiter (H6) ───────────────────────────────────────────────────────
@@ -769,6 +746,7 @@ _METRIC_OUTCOMES = (
     "auth_rejected",
     "auth_unavailable",
     "auth_rate_limited",
+    "csrf_rejected",
     "api_rate_limited",
     "work_budget_exhausted",
     "provider_unavailable",
@@ -1248,6 +1226,21 @@ def before_request_hook():
     request.request_id = str(uuid.uuid4())
     request.start_time = time.monotonic()
 
+    # SameSite cookies reduce cross-site exposure but do not distinguish a
+    # compromised same-site sibling. Browser-backed authentication therefore
+    # requires the configured exact public Origin before any unsafe operation
+    # can reach the auth authority or mutate tenant state. Token clients remain
+    # usable for operator automation without a browser Origin header.
+    if (
+        request.method in _UNSAFE_BROWSER_METHODS
+        and not _has_valid_browser_origin()
+    ):
+        _record_outcome("csrf_rejected")
+        return jsonify({
+            "error": "forbidden",
+            "request_id": request.request_id,
+        }), 403
+
     # Liveness/readiness and preflight stay independent of external auth so
     # orchestration can diagnose an auth-authority outage. Everything else,
     # including metrics and stats, receives a server-owned opaque subject.
@@ -1371,7 +1364,7 @@ def after_request_hook(response):
     if allowed:
         response.headers["Access-Control-Allow-Origin"] = allowed
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-BT-Token"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
         # Let cross-origin JS read the request ID and 429 Retry-After header.
         response.headers["Access-Control-Expose-Headers"] = "X-Request-ID, Retry-After"
         response.vary.add("Origin")
