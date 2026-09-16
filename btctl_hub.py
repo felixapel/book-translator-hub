@@ -637,7 +637,7 @@ class HubInstaller:
         if (
             tmpfs_options - size_options
             != {"rw", "noexec", "nosuid", "uid=101", "gid=102", "mode=700"}
-            or size_options != {"size=134217728"}
+            or size_options not in ({"size=128m"}, {"size=134217728"})
         ):
             raise InstallError("hub container sandbox does not match")
         expected_bindings = {

@@ -400,6 +400,35 @@ class HubBtctlTests(unittest.TestCase):
             )
             self.assertEqual(docker.calls.count("sqlite"), 2)
 
+            hub_tmpfs = docker.hub["HostConfig"]["Tmpfs"]
+            hub_tmpfs["/tmp"] = "rw,noexec,nosuid,size=128m,uid=101,gid=102,mode=700"
+            self.assertEqual(
+                HubInstaller(docker)._verify_hub(
+                    config,
+                    state.install_id,
+                    require_healthy=True,
+                    expected_image_id=docker.image["Id"],
+                )["Id"],
+                "hub-container-id",
+            )
+            for tmpfs in (
+                "rw,noexec,nosuid,size=64m,uid=101,gid=102,mode=700",
+                "rw,noexec,nosuid,size=256m,uid=101,gid=102,mode=700",
+                "rw,noexec,nosuid,uid=101,gid=102,mode=700",
+                "rw,noexec,nosuid,size=128m,uid=101,gid=102,mode=700,exec",
+            ):
+                with self.subTest(tmpfs=tmpfs):
+                    hub_tmpfs["/tmp"] = tmpfs
+                    with self.assertRaisesRegex(
+                        InstallError, "hub container sandbox does not match"
+                    ):
+                        HubInstaller(docker)._verify_hub(
+                            config,
+                            state.install_id,
+                            require_healthy=True,
+                            expected_image_id=docker.image["Id"],
+                        )
+
     def test_failed_hub_cleanup_is_recorded_and_reported(self):
         class Docker:
             def __init__(self, plan):
