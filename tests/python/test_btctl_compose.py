@@ -231,7 +231,7 @@ class FakeDocker:
         (Path(path) / filename).unlink()
 
 
-def values(root: Path, *, forwarded=False, reader="cwa"):
+def values(root: Path, *, forwarded=False, reader="cwa", reader_version="0.9.0.2"):
     result = {
         "BT_INSTALL_PROFILE": "compose-existing",
         "BT_INSTALL_NAME": "cwa-translate-test",
@@ -267,7 +267,7 @@ def values(root: Path, *, forwarded=False, reader="cwa"):
                 "BT_READER_UPSTREAM": "http://kavita:5000",
                 "BT_READER_CONTAINER": "kavita",
                 "BT_READER_NETWORK": "kavita_default",
-                "BT_READER_VERSION": "0.9.0.2",
+                "BT_READER_VERSION": reader_version,
             }
         )
     if forwarded:
@@ -358,6 +358,18 @@ class ComposeRenderTests(unittest.TestCase):
             )
             self.assertNotIn("environment", document["services"]["api"])
             self.assertNotIn("environment", document["services"]["proxy"])
+
+    def test_kavita_0_9_1_4_compose_environment_keeps_the_exact_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = InstallConfig.from_mapping(
+                values(
+                    Path(directory), reader="kavita", reader_version="0.9.1.4"
+                ),
+                self.identity,
+            )
+
+        self.assertEqual(config.reader_contract_version, "kavita-0.9.1.4-epub-v1")
+        self.assertEqual(config.api_environment()["BT_ALLOWED_ORIGINS"], config.public_origin)
 
     def test_forwarded_profile_joins_identity_edge_without_publishing_ports(self):
         with tempfile.TemporaryDirectory() as directory:

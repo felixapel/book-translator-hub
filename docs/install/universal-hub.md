@@ -27,10 +27,14 @@ cp .env.hub.example /absolute/private/path/book-translator-hub.env
 chmod 0600 /absolute/private/path/book-translator-hub.env
 ```
 
-Set exact state/data/backup paths, reader container names, existing Docker
-networks, public origins and ports. Generate a different connector UUID for
-each reader with `uuidgen`. Disable a reader with exactly `false`; variables
-for a disabled reader are ignored by the runtime.
+Set the exact state/data/backup paths, reader container names, existing Docker
+networks, public origins and ports. The three storage directories must be
+absolute, disjoint persistent paths. For every enabled reader, the hostname in
+`BT_<READER>_READER_UPSTREAM` must exactly equal
+`BT_<READER>_READER_CONTAINER`; the hub uses that existing network to reach the
+stock container. Generate a different connector UUID for each reader with
+`uuidgen`, replacing the example IDs before an install. Disable a reader with
+exactly `false`; variables for a disabled reader are ignored by the runtime.
 
 For Unraid, use `BT_INSTALL_PROFILE=unraid` and real paths below an existing
 `/mnt/user/<share>/` or `/mnt/<pool>/` boundary. `btctl` creates one raw Docker
@@ -39,7 +43,10 @@ container and does not depend on the Compose plugin. For Linux Compose, keep
 Compose JSON contains no environment values; `hub.env` is a separate raw,
 mode-`0600` artifact below `BT_STATE_DIR`.
 
-Select a provider with a normal server-side API contract. A Gemini example is:
+The sample defaults to a local OpenAI-compatible provider with a placeholder
+internal hostname. Replace it with the exact local endpoint and
+model in the private copy. Select a named remote provider only when its
+server-side API key is available in that private file. For example:
 
 ```dotenv
 LLM_PROVIDER=gemini
@@ -61,14 +68,10 @@ mode-`0600` environment file and never put it in a Compose file, command line,
 browser setting or support log. The Gemini adapter owns its fixed HTTPS
 endpoint; no endpoint variable is required.
 
-The example uses a cloud-oriented batch profile. The first visible paragraph
-still translates alone; later visible calls contain up to ten paragraphs and
-the API splits a group before its estimated source exceeds 450 tokens.
-Whole-chapter prefetch remains opt-in and waits one second between request
-starts. This reduces request pressure without adding latency to visible work.
-Use `/metrics` and adjust one value at a time for a different model or quota.
-Set `BT_BATCH_SOURCE_TOKEN_BUDGET=0` and
-`BT_CLIENT_PREFETCH_GAP_MS=0` to restore the historical scheduling behavior.
+The first visible paragraph translates alone. Tune batching only after measuring
+the chosen provider; `BT_BATCH_SOURCE_TOKEN_BUDGET=0` and
+`BT_CLIENT_PREFETCH_GAP_MS=0` preserve count-only grouping without delayed
+prefetch.
 
 For a local backend use `LLM_PROVIDER=local`, leave `LLM_API_KEY` empty and set
 the exact `BT_LOCAL_URL`. Per-reader overrides use
@@ -167,15 +170,13 @@ restarts only source roles recorded as running before cutover:
 After either cutover or rollback, open reader tabs may need one automatic
 session exchange because sessions are process-local and intentionally short.
 
-## Acceptance
+## Required checks before use
 
-- `doctor` reports every check as `ok`.
-- Only the configured proxy ports are published; `8391` and `8392` remain
-  loopback-only inside the container.
-- CWA and Kavita each show the toolbar on a DRM-free EPUB and can translate.
-- Each reader has its own `translations.db`, `reader_session_key` and cookie.
-- Stopping any hub child makes the container unhealthy or exited and Docker
-  restarts the complete generation.
+Run `doctor` after installing, then verify both readers through their configured
+public HTTPS origins. Confirm that only the configured proxy ports are
+published, each reader uses its own database, session key and cookie, and a
+DRM-free EPUB translates after native reader login. The internal APIs remain
+container-loopback endpoints; process health alone is not browser acceptance.
 
 ### Browser gate for an exact candidate
 
@@ -186,9 +187,8 @@ browser check on the deployed candidate. After an uninstall/install or image
 replacement, the hub regenerates reader session keys; sign in again and do not
 rely on a cached reader tab.
 
-For every enabled reader, record the commit, image digest, stock-reader version,
-browser/version and provider/model in the release issue. Then use the public
-HTTPS origin (never the stock reader port) and verify:
+For every enabled reader, use the public HTTPS origin (never the stock reader
+port) and verify on the exact candidate:
 
 1. `GET /bt-config.json` returns `200`, `Cache-Control: no-store`, and the
    expected reader type/version. The page loads one translator loader only.
@@ -204,6 +204,6 @@ HTTPS origin (never the stock reader port) and verify:
 5. CWA and Kavita remain isolated: each has its own public route, state/data
    directory, SQLite database, session key, cookie and backup boundary.
 
-Record pass/fail evidence for each item before promoting a candidate to a
-stable release. `/ping`, `/health` and `/ready` prove process health only; they
-do not prove authenticated translation.
+`/ping`, `/health` and `/ready` prove process health only; they do not prove
+authenticated translation. Keep release acceptance evidence outside tracked
+guides.

@@ -5,7 +5,7 @@
 (function () {
     'use strict';
     // ── Version & Telemetry ──────────────────────────────────────────
-    const BT_UI_VERSION = '2.4.0';
+    const BT_UI_VERSION = '2.4.1';
     console.log(`[BookTranslator] loaded version ${BT_UI_VERSION}`);
     const cfg = (typeof window !== 'undefined' && window.BOOK_TRANSLATOR) || {};
     function boundedInteger(value, minimum, maximum, fallback) {
@@ -16,12 +16,12 @@
     const READER_TYPE = configuredReaderType === 'kavita' ? 'kavita' : 'cwa';
     const STRICT_READER_ROUTE = configuredReaderType === 'cwa'
         || configuredReaderType === 'kavita';
-    const validKavitaVersion = cfg.readerVersion === '0.9.0.2'
-        || /^0\.9\.[0-9]+(\.[0-9]+)?$/.test(cfg.readerVersion || '');
     const validKavitaContract = READER_TYPE === 'kavita'
-        && validKavitaVersion
-        && (cfg.readerContractVersion === 'kavita-0.9.0.2-epub-v1'
-            || cfg.readerContractVersion === 'kavita-epub-v1');
+        && cfg.authMode === 'reader_session'
+        && ((cfg.readerVersion === '0.9.0.2'
+                && cfg.readerContractVersion === 'kavita-0.9.0.2-epub-v1')
+            || (cfg.readerVersion === '0.9.1.4'
+                && cfg.readerContractVersion === 'kavita-0.9.1.4-epub-v1'));
     if (configuredReaderType && configuredReaderType !== 'cwa'
             && configuredReaderType !== 'kavita') {
         console.error('[BookTranslator] disabled: unsupported reader type');
@@ -42,19 +42,32 @@
         ? cfg.apiUrl
         : (window.location.protocol === 'https:' ? null : `http://${window.location.hostname}:8390`);
     // ── Per-book preferences (additive) ──────────────────────────────
-    // Mode and languages are remembered per book and fall back to the
-    // pre-existing global keys, which stay the default for new books and
-    // keep older stored values working. Every write below updates the
-    // global key first (unchanged contract) and then the per-book key.
+    // Mode and languages are remembered per book. Capture legacy global
+    // values once as defaults: reading them again after another book writes
+    // its preference would otherwise leak A's settings into B during SPA
+    // navigation.
+    const legacyPreferenceDefaults = {};
+    ['bt_mode', 'bt_lang', 'bt_source_lang'].forEach((name) => {
+        try { legacyPreferenceDefaults[name] = localStorage.getItem(name); }
+        catch (e) { legacyPreferenceDefaults[name] = null; }
+    });
+
+    function preferenceBookId() {
+        if (READER_TYPE === 'kavita') {
+            const route = kavitaRouteParts();
+            return route ? `${route.libraryId}:${route.seriesId}:${route.chapterId}` : 'unscoped';
+        }
+        return currentBookId();
+    }
     function bookScopeId() {
-        try { return currentBookId(); } catch (e) { return 'unscoped'; }
+        try { return preferenceBookId(); } catch (e) { return 'unscoped'; }
     }
     function bookPrefGet(name) {
         try {
             const scoped = localStorage.getItem('bt_book_' + bookScopeId() + '_' + name);
             if (scoped !== null && scoped !== undefined) return scoped;
         } catch (e) { /* storage may be unavailable */ }
-        try { return localStorage.getItem(name); } catch (e) { return null; }
+        return legacyPreferenceDefaults[name] || null;
     }
     function bookPrefRemember(name, value) {
         try { localStorage.setItem('bt_book_' + bookScopeId() + '_' + name, value); }
@@ -81,7 +94,7 @@
 
     let SOURCE_LANG_SETTING = bookPrefGet('bt_source_lang') || (cfg.sourceLang && cfg.sourceLang !== 'English' ? cfg.sourceLang : 'Auto');
     let detectedSourceLang = null;
-    let SOURCE_LANG = 'English';
+    let SOURCE_LANG = null;
 
     // Map browser language codes to the full language name the backend expects
     // (used only to pick a sensible default target on first run).
@@ -111,6 +124,7 @@
     const BT_CLIENT_MAX_RETRY_AFTER_SECONDS = 60;
 
     let translationMode = bookPrefGet('bt_mode') || 'off'; // 'off', 'bilingual', 'translated'
+    let activePreferenceScope = bookScopeId();
     let isTranslating = false;
     let isPrefetching = false;
     let visibleQueue = [];
@@ -376,16 +390,11 @@
             exportEmpty: 'Nothing translated yet — nothing to export.',
             exportFailed: 'EPUB export failed.',
             exportDone: 'EPUB downloaded.',
-            ttsSpeak: 'Listen',
-            ttsPause: 'Pause',
-            ttsResume: 'Resume',
-            ttsStop: 'Stop',
-            ttsEmpty: 'Nothing to read yet.',
-            ttsUnsupported: 'Speech is not supported in this browser.',
             fbUp: 'Good translation',
             fbDown: 'Bad translation',
             fbThanks: 'Thanks for the feedback.',
             offline: 'Offline — resumes on reconnect',
+            sourceUnknown: 'Select a source language',
         },
         es: {
             off: 'Original', bilingual: 'Bilingüe', translated: 'Traducido',
@@ -406,6 +415,7 @@
             dbgQueue: 'Cola', dbgGen: 'Generación', dbgTrigger: 'Último disparo',
             restoring: 'Restaurando traducciones guardadas…',
             stylePreset: 'Estilo de texto', presetDefault: 'Predeterminado', presetContrast: 'Alto contraste', presetLarge: 'Texto grande',
+            sourceUnknown: 'Selecciona el idioma de origen',
         },
         fr: {
             off: 'Original', bilingual: 'Bilingue', translated: 'Traduit',
@@ -426,6 +436,7 @@
             barPos: 'Position', posTop: 'Haut', posBottom: 'Bas', posReset: 'Réinitialiser en bas', posDragHint: 'Touchez ou faites glisser la barre pour la déplacer.',
             dbgQueue: 'File', dbgGen: 'Génération', dbgTrigger: 'Dernier déclenchement',
             stylePreset: 'Style de texte', presetDefault: 'Par défaut', presetContrast: 'Contraste élevé', presetLarge: 'Grand texte',
+            sourceUnknown: 'Sélectionnez la langue source',
         },
         de: {
             off: 'Original', bilingual: 'Zweisprachig', translated: 'Übersetzt',
@@ -446,6 +457,7 @@
             barPos: 'Position', posTop: 'Oben', posBottom: 'Unten', posReset: 'Nach unten zurücksetzen', posDragHint: 'Leiste berühren oder ziehen, um sie zu verschieben.',
             dbgQueue: 'Warteschlange', dbgGen: 'Generation', dbgTrigger: 'Letzter Auslöser',
             stylePreset: 'Textstil', presetDefault: 'Standard', presetContrast: 'Hoher Kontrast', presetLarge: 'Großer Text',
+            sourceUnknown: 'Ausgangssprache auswählen',
         },
         pt: {
             off: 'Original', bilingual: 'Bilíngue', translated: 'Traduzido',
@@ -466,6 +478,7 @@
             barPos: 'Posição', posTop: 'Topo', posBottom: 'Base', posReset: 'Repor na base', posDragHint: 'Toque ou arraste a barra para movê-la.',
             dbgQueue: 'Fila', dbgGen: 'Geração', dbgTrigger: 'Último disparo',
             stylePreset: 'Estilo de texto', presetDefault: 'Padrão', presetContrast: 'Alto contraste', presetLarge: 'Texto grande',
+            sourceUnknown: 'Selecione o idioma de origem',
         },
     };
     // English is the base; the locale (if any) overrides it, so menu-only keys
@@ -641,8 +654,19 @@
     function bcp47ToValidLanguage(code) {
         if (!code || typeof code !== 'string') return null;
         const clean = code.trim().toLowerCase();
+        const subtags = clean.split(/[-_]/);
+        if (subtags[0] === 'zh') {
+            if (subtags.includes('hant') || subtags.includes('tw')
+                    || subtags.includes('hk') || subtags.includes('mo')) {
+                return 'Chinese (Traditional)';
+            }
+            if (subtags.includes('hans') || subtags.includes('cn')
+                    || subtags.includes('sg')) {
+                return 'Chinese';
+            }
+        }
         if (ISO_TO_VALID_LANG[clean]) return ISO_TO_VALID_LANG[clean];
-        const primary = clean.split(/[-_]/)[0];
+        const primary = subtags[0];
         if (ISO_TO_VALID_LANG[primary]) return ISO_TO_VALID_LANG[primary];
         for (const lang of availableLangs) {
             if (lang.code.toLowerCase() === clean) return lang.code;
@@ -652,6 +676,17 @@
 
     function detectBookLanguage(doc) {
         try {
+            if (READER_TYPE === 'kavita') {
+                // Kavita's shell is localized independently from its EPUB.
+                // Only an explicit language marker on the rendered book
+                // content is admissible here; never inspect html/body/meta on
+                // the application shell.
+                const content = doc && doc.querySelector && doc.querySelector('.book-content');
+                const rawLang = content && (content.getAttribute('data-bt-book-language')
+                    || content.getAttribute('xml:lang')
+                    || content.getAttribute('lang'));
+                return bcp47ToValidLanguage(rawLang);
+            }
             const reader = (typeof window !== 'undefined') && (window.reader || window.book);
             if (reader) {
                 const pkgMeta = reader.package && reader.package.metadata;
@@ -691,11 +726,10 @@
         if (!detectedSourceLang && doc) {
             detectedSourceLang = detectBookLanguage(doc);
         }
-        return detectedSourceLang || 'English';
+        return detectedSourceLang || null;
     }
 
     SOURCE_LANG = resolveEffectiveSourceLang(null);
-    if (!availableLangCodes.has(SOURCE_LANG)) SOURCE_LANG = 'English';
 
     function sourceLanguageOptions(selected, detected) {
         const autoLabel = detected
@@ -706,6 +740,48 @@
         return `<optgroup label="Auto">${autoOption}</optgroup>` +
             `<optgroup label="${t.topLanguages}">${TOP_LANGUAGES.map(l => `<option value="${l.code}"${l.code === selected ? ' selected' : ''}>${l.name === l.code ? l.code : `${l.name} — ${l.code}`}</option>`).join('')}</optgroup>` +
             `<optgroup label="${t.allLanguages}">${MORE_LANGUAGES.map(l => `<option value="${l.code}"${l.code === selected ? ' selected' : ''}>${l.code} — ${l.name}</option>`).join('')}</optgroup>`;
+    }
+
+    function restoreBookPreferences() {
+        const nextScope = bookScopeId();
+        if (nextScope === activePreferenceScope) return false;
+
+        // SPA navigation keeps this script alive. Abort and discard the old
+        // generation before replacing any UI state so an A response cannot
+        // appear in B after a fast A → B → A navigation.
+        persistCacheNow();
+        destinationPreviousParagraphs = getTranslatableElements(getReaderRoot());
+        activePreferenceScope = nextScope;
+        SOURCE_LANG_SETTING = bookPrefGet('bt_source_lang')
+            || (cfg.sourceLang && cfg.sourceLang !== 'English' ? cfg.sourceLang : 'Auto');
+        detectedSourceLang = null;
+        SOURCE_LANG = resolveEffectiveSourceLang(null);
+        TARGET_LANG = bookPrefGet('bt_lang') || cfg.targetLang || defaultLang;
+        if (!availableLangCodes.has(TARGET_LANG)) TARGET_LANG = defaultLang;
+        translationMode = bookPrefGet('bt_mode') || 'off';
+        newGeneration();
+        translatedParagraphs = loadCacheForLang(TARGET_LANG);
+        glossaryEntries = [];
+        glossaryLoading = false;
+        glossaryLoadedBook = null;
+        // Keep the old reader DOM untouched until the destination content is
+        // observed. Clearing translated inline content here would itself look
+        // like a same-node book replacement to the observer.
+        awaitingDestinationContent = true;
+        destinationContentPollUntil = Date.now() + DESTINATION_CONTENT_POLL_WINDOW_MS;
+        return true;
+    }
+
+    function refreshBookPreferenceUI() {
+        const bar = document.getElementById('bt-bar');
+        if (bar) bar.dataset.mode = translationMode;
+        const modeLabel = document.getElementById('bt-toggle-label');
+        if (modeLabel) modeLabel.textContent = translationMode === 'bilingual'
+            ? t.bilingual : translationMode === 'translated' ? t.translated : t.off;
+        const target = document.getElementById('bt-lang');
+        if (target) target.value = TARGET_LANG;
+        buildMenu();
+        refreshStatus();
     }
 
     function languageOptions(selected) {
@@ -1252,7 +1328,10 @@
         let progressValue = 0;
         if (translationMode !== 'off') {
             const now = Date.now();
-            if (isOffline) {
+            if (!availableLangCodes.has(SOURCE_LANG)) {
+                state = 'source-unknown';
+                text.textContent = t.sourceUnknown;
+            } else if (isOffline) {
                 state = 'offline';
                 text.textContent = t.offline;
             } else if (rateLimitUntil > now) {
@@ -1355,7 +1434,10 @@
         }
         const iframe = getReaderIframe();
         if (iframe) {
-            try { return iframe.contentDocument || iframe.contentWindow.document; } catch (e) { return null; }
+            try {
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                return iframeDoc && iframeDoc !== document && iframeDoc.body ? iframeDoc : null;
+            } catch (e) { return null; }
         }
         return null;
     }
@@ -1364,7 +1446,10 @@
         if (READER_TYPE === 'kavita') {
             return (typeof document !== 'undefined' && document) ? document.querySelector('.book-content') : null;
         }
-        return getReaderDoc() || (typeof document !== 'undefined' ? document : null);
+        // The CWA page itself is a reader shell. Returning it here turns any
+        // host-page paragraph into book text while an iframe is absent or
+        // inaccessible, so wait for a readable EPUB document instead.
+        return getReaderDoc();
     }
 
     const HEADING_CLASS_RE = /title|subtitle|chapter|heading|epigraph/i;
@@ -2274,6 +2359,7 @@
 
     async function translateCurrentPage() {
         if (translationMode === 'off' || !readerRouteActive) return;
+        if (destinationContentPending()) return;
         
         const myGen = generation;
         const idoc = getReaderDoc();
@@ -2291,6 +2377,18 @@
         if (idoc && READER_TYPE === 'cwa') {
             ensureIframeStyles(idoc);
             applyIframeTheme(idoc);
+        }
+
+        // A source language is consent-critical request context. Do not infer
+        // it from the browser or reader shell; require verified book content
+        // metadata or an explicit picker value before sending text.
+        if (!availableLangCodes.has(SOURCE_LANG)) {
+            visibleQueue = [];
+            prefetchQueue = [];
+            isTranslating = false;
+            isPrefetching = false;
+            refreshStatus();
+            return;
         }
 
         const visibleEls = getVisibleParagraphs();
@@ -2544,8 +2642,11 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
                 && target.closest('#bt-bar, #bt-menu, #bt-toast, [data-original-text]')) {
             return false;
         }
-        if (mutation.addedNodes.length === 0) return true;
-        return Array.from(mutation.addedNodes).some(node => !isBtNode(node));
+        const changedNodes = Array.from(mutation.addedNodes)
+            .concat(Array.from(mutation.removedNodes));
+        // Character-data edits have no nodes but still change book content.
+        if (changedNodes.length === 0) return true;
+        return changedNodes.some(node => !isBtNode(node));
     }
 
     let translateTimeout = null;
@@ -2553,6 +2654,24 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
     let readerObserver = null;
     let mainObserver = null;
     const watchedReaderIframes = new WeakSet();
+    let awaitingDestinationContent = false;
+    let destinationPreviousParagraphs = [];
+    let destinationContentPollUntil = 0;
+    const DESTINATION_CONTENT_POLL_WINDOW_MS = 5000;
+
+    function destinationContentPending() {
+        return awaitingDestinationContent;
+    }
+
+    function destinationContentPollActive() {
+        return awaitingDestinationContent && Date.now() < destinationContentPollUntil;
+    }
+
+    function confirmDestinationContent() {
+        awaitingDestinationContent = false;
+        destinationPreviousParagraphs = [];
+        destinationContentPollUntil = 0;
+    }
 
     function setOverlayHidden(hidden) {
         ['bt-bar', 'bt-menu', 'bt-toast'].forEach(id => {
@@ -2582,20 +2701,30 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
             return false;
         }
 
+        const preferencesChanged = restoreBookPreferences();
         readerRouteActive = true;
         createFloatingUI();
         applyBarPosition();
         setOverlayHidden(false);
-        if (!wasActive && !initial && translationMode !== 'off') {
-            lastContentIdentity = null;
-            attachReaderContentObserver();
-            scheduleTranslate('reader_route', { immediate: true, forceRediscover: true });
+        if (preferencesChanged) refreshBookPreferenceUI();
+        if ((!wasActive || preferencesChanged) && !initial && translationMode !== 'off') {
+            if (preferencesChanged) {
+                // History can change before Kavita replaces .book-content.
+                // Preserve the previous identity and wait for a replacement or
+                // content mutation instead of translating A under B's scope.
+                attachReaderContentObserver({ rediscover: true });
+            } else {
+                lastContentIdentity = null;
+                attachReaderContentObserver();
+                scheduleTranslate('reader_route', { immediate: true, forceRediscover: true });
+            }
         }
         return true;
     }
 
     function scheduleTranslate(reason, { immediate = false, forceRediscover = false } = {}) {
         if (translationMode === 'off' || !readerRouteActive) return;
+        if (destinationContentPending()) return;
         lastTriggerReason = reason;
 
         if (forceRediscover) {
@@ -2641,11 +2770,19 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
 
         const replacesObservedContent = lastContentIdentity !== null;
         lastContentIdentity = content;
+        if (replacesObservedContent) confirmDestinationContent();
         invalidateParagraphsCache();
         if (readerObserver) readerObserver.disconnect();
         readerObserver = new MutationObserver((mutations) => {
             if (!readerRouteActive
                     || !mutations.some(mutationContainsReaderContent)) return;
+            // Annotation/lazy-loader mutations can occur in A after the URL
+            // switches to B. For a reused root, wait until all captured A
+            // paragraphs have left it; arbitrary DOM activity is not proof
+            // that the destination has arrived.
+            if (awaitingDestinationContent
+                    && destinationPreviousParagraphs.some(node => content.contains(node))) return;
+            confirmDestinationContent();
             scheduleTranslate(
                 READER_TYPE === 'kavita'
                     ? 'kavita_content_mutation' : 'iframe_mutation',
@@ -2695,6 +2832,12 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         // Track CWA iframe documents and Kavita's stable .book-content host.
         setInterval(() => {
             if (!syncReaderRoute()) return;
+            if (destinationContentPending() && !destinationContentPollActive()) {
+                // A route update without replacement must not keep polling or
+                // translate stale content. Existing observers still release
+                // the gate whenever the reader eventually renders the book.
+                return;
+            }
             attachReaderContentObserver({ rediscover: true });
             if (translationMode === 'off') return;
 
@@ -2858,6 +3001,3 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         init();
     }
 })();
-
-
-

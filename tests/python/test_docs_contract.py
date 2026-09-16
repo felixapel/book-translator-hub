@@ -52,16 +52,11 @@ class DocumentationContractTests(unittest.TestCase):
     def test_repository_documentation_contract(self):
         self.assertEqual(collect_errors(REPOSITORY), [])
 
-    def test_checker_uses_repository_version_as_release_truth(self):
+    def test_public_readme_requires_a_published_tag_without_inferring_one(self):
         version = (Path(REPOSITORY) / "VERSION").read_text(encoding="utf-8").strip()
         readme = (Path(REPOSITORY) / "README.md").read_text(encoding="utf-8")
-        if "-" in version:
-            self.assertIn(
-                f"Version `{version}` is still an unreleased candidate", readme
-            )
-            self.assertNotIn(f"git switch --detach v{version}", readme)
-        else:
-            self.assertIn(f"git switch --detach v{version}", readme)
+        self.assertIn("git switch --detach vX.Y.Z", readme)
+        self.assertNotIn(f"git switch --detach v{version}", readme)
 
     def test_checker_derives_current_series_and_checks_agent_guidance(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -91,7 +86,7 @@ class DocumentationContractTests(unittest.TestCase):
                 for error in errors
             ))
 
-    def test_checker_treats_the_full_prerelease_as_the_current_version(self):
+    def test_checker_does_not_infer_a_published_tag_from_a_prerelease(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             fixture = self.copy_repository_fixture(Path(temp_dir))
             original_version = (fixture / "VERSION").read_text(
@@ -101,11 +96,7 @@ class DocumentationContractTests(unittest.TestCase):
             (fixture / "VERSION").write_text(candidate + "\n", encoding="utf-8")
             readme_path = fixture / "README.md"
             readme_path.write_text(
-                readme_path.read_text(encoding="utf-8").replace(
-                    f"Version `{original_version}` is still an unreleased candidate",
-                    f"Version `{candidate}` is still an unreleased candidate",
-                ),
-                encoding="utf-8",
+                readme_path.read_text(encoding="utf-8"), encoding="utf-8"
             )
             claude_path = fixture / "CLAUDE.md"
             claude_path.write_text(

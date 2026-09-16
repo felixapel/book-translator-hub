@@ -129,9 +129,11 @@ failure without session-cookie contents.
 
 ## Translation requests return 401 with Kavita
 
-Kavita requires `BT_AUTH_PROFILE=reader-session`, stock version `0.9.0.2`, and
-an HTTPS public origin outside loopback. Sign out and back in through that
-origin, open the exact EPUB route, and inspect `POST /bt-api/session` first.
+Kavita requires `BT_AUTH_PROFILE=reader-session`, an exact supported stock
+version, and an HTTPS public origin outside loopback. `0.9.0.2` and `0.9.1.4`
+are separate contracts; see the [compatibility matrix](../reference/compatibility.md).
+Sign out and back in through that origin, open the exact EPUB route, and inspect
+`POST /bt-api/session` first.
 
 - Native login requires a bounded access token in Kavita's own `kavita-user`
   local-storage object. The connector reads its `token` field only; it never
@@ -139,9 +141,13 @@ origin, open the exact EPUB route, and inspect `POST /bt-api/session` first.
 - Stock OIDC login requires the exact `.AspNetCore.Cookies` cookie, including
   contiguous `C1`, `C2`, ... chunks when ASP.NET split it. Unrelated cookies
   are not forwarded to the account probe.
-- The exchange must return `200` with `reader_type: "kavita"`, exact version
-  `0.9.0.2`, and `expires_in` no greater than 300. The cookie itself is HttpOnly
-  and therefore correctly absent from JavaScript storage.
+- The exchange must return `200` with `reader_type: "kavita"`, the exact
+  configured reader version, and `expires_in` no greater than 300. The cookie
+  itself is HttpOnly and therefore correctly absent from JavaScript storage.
+- The isolated native `0.9.1.4` account/broker fixture requires a positive
+  account `id` and matching `kavitaVersion`. It does not establish `0.9.1.4`
+  browser or OIDC acceptance; do not troubleshoot a browser OIDC failure by
+  assuming that fixture covers it.
 - A `401` means the native proof, version, origin, observed address or
   User-Agent did not match. A `503` means `/api/Account` was unreachable or
   returned a malformed/oversized response. `doctor` catches container,
@@ -389,7 +395,8 @@ reverse proxy compression and script injection attributes:
 ## Translation overlay does not appear in Kavita
 
 1. **Check `/bt-config.json`:** Verify that `GET https://your-kavita-domain/bt-config.json`
-   returns `"readerType":"kavita"` and a supported `readerVersion` (such as `"0.9.1.4"`).
+   returns `"readerType":"kavita"` and the exact configured supported
+   `readerVersion` (`"0.9.0.2"` or `"0.9.1.4"`).
    If `readerType` is missing or set to `cwa`, the loader stays inert on Kavita routes.
 2. **Supported routes:** The overlay activates exclusively when an EPUB is opened
    at `/library/:libraryId/series/:seriesId/book/:chapterId`. Non-EPUB views, manga,

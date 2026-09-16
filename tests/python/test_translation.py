@@ -399,15 +399,25 @@ def run():
           results[0][0] == "[FB] attribution_test_para" and results[0][1] == "minimax")
     STATE["local_up"] = True
 
-    # CORS: private-LAN origins allowed (default), exposes Retry-After header.
-    r = client.get("/ping", headers={"Origin": "http://192.168.1.50:8083"})
-    check("cors: private LAN origin allowed",
-          r.headers.get("Access-Control-Allow-Origin") == "http://192.168.1.50:8083")
-    check("cors: Retry-After exposed to JS",
-          "Retry-After" in (r.headers.get("Access-Control-Expose-Headers") or ""))
-    r = client.get("/ping", headers={"Origin": "https://evil.example.com"})
-    check("cors: unknown public origin rejected",
-          r.headers.get("Access-Control-Allow-Origin") is None)
+    # CORS grants only exact operator-configured origins. A private address is
+    # not implicitly trusted merely because it belongs to an RFC1918 range.
+    original_origins = server.ALLOWED_ORIGINS
+    try:
+        allowlisted = "http://192.168.1.50:8083"
+        server.ALLOWED_ORIGINS = frozenset({allowlisted})
+        r = client.get("/ping", headers={"Origin": allowlisted})
+        check("cors: exact allowlisted origin is allowed",
+              r.headers.get("Access-Control-Allow-Origin") == allowlisted)
+        check("cors: allowlisted origin exposes Retry-After to JS",
+              "Retry-After" in (r.headers.get("Access-Control-Expose-Headers") or ""))
+        r = client.get("/ping", headers={"Origin": "http://192.168.1.51:8083"})
+        check("cors: unknown private origin is not auto-granted",
+              r.headers.get("Access-Control-Allow-Origin") is None)
+        r = client.get("/ping", headers={"Origin": "https://evil.example.com"})
+        check("cors: unknown public origin rejected",
+              r.headers.get("Access-Control-Allow-Origin") is None)
+    finally:
+        server.ALLOWED_ORIGINS = original_origins
 
     # Output token cap is proportional to input and clamped to the ceiling, so a
     # rambling model can't burn thousands of tokens on a short paragraph.
@@ -443,26 +453,60 @@ def run():
     pr = client.get("/ping")
     check("ping returns 200 instantly", pr.status_code == 200 and pr.get_json().get("status") == "ok")
 
-    # Rate Limiting
-    server._rate_limit_store.clear()
-    limit = server.RATE_LIMIT_MAX
-    for i in range(limit):
-        client.post("/translate", json={"text": f"rate{i}"})
-    resp = client.post("/translate", json={"text": "limit_test"})
-    check("rate limit: returns status 429", resp.status_code == 429)
-    check("rate limit: response has Retry-After header", "Retry-After" in resp.headers)
-    check("rate limit: response JSON has retry_after", resp.get_json().get("retry_after") is not None)
-    check("rate limit: response explicitly marks replay as safe",
-          resp.get_json().get("retry_safe") is True)
-    check("rate limit: response identifies pre-provider admission",
-          resp.get_json().get("scope") == "api_admission")
-    # CORS preflights must NOT burn rate-limit budget: a 429 on an OPTIONS
-    # surfaces as a cryptic CORS error in the browser, and every real request
-    # would cost 2x. Even while fully rate-limited, OPTIONS sails through.
-    check("rate limit: OPTIONS preflight exempt while rate-limited",
-          client.options("/translate/batch",
-                         headers={"Origin": "http://192.168.1.2:8083"}).status_code != 429)
-    server._rate_limit_store.clear()
+    # Rate limiting has two independent budgets. Exercise authentication first
+    # without accidentally exhausting the API-work budget, then raise only the
+    # auth budget while proving the API budget returns its own admission scope.
+    original_auth_limit = server.BT_AUTH_RATE_LIMIT_PER_MINUTE
+    try:
+        server._rate_limit_store.clear()
+        server._auth_rate_limit_store.clear()
+        server.BT_AUTH_RATE_LIMIT_PER_MINUTE = 1
+        first_auth = client.post(
+            "/translate",
+            json={
+                "text": "auth-budget-first",
+                "source_lang": "English",
+                "target_lang": "English",
+            },
+        )
+        auth_limited = client.post(
+            "/translate",
+            json={
+                "text": "auth-budget-second",
+                "source_lang": "English",
+                "target_lang": "English",
+            },
+        )
+        check("auth rate limit: first request is admitted", first_auth.status_code == 200)
+        check("auth rate limit: exhausted budget returns 429",
+              auth_limited.status_code == 429)
+        check("auth rate limit: response identifies auth admission",
+              auth_limited.get_json().get("scope") == "auth_admission")
+
+        server._rate_limit_store.clear()
+        server._auth_rate_limit_store.clear()
+        limit = server.RATE_LIMIT_MAX
+        server.BT_AUTH_RATE_LIMIT_PER_MINUTE = limit + 1
+        for i in range(limit):
+            client.post("/translate", json={"text": f"rate{i}"})
+        resp = client.post("/translate", json={"text": "limit_test"})
+        check("rate limit: returns status 429", resp.status_code == 429)
+        check("rate limit: response has Retry-After header", "Retry-After" in resp.headers)
+        check("rate limit: response JSON has retry_after", resp.get_json().get("retry_after") is not None)
+        check("rate limit: response explicitly marks replay as safe",
+              resp.get_json().get("retry_safe") is True)
+        check("rate limit: response identifies API admission",
+              resp.get_json().get("scope") == "api_admission")
+        # CORS preflights must NOT burn rate-limit budget: a 429 on an OPTIONS
+        # surfaces as a cryptic CORS error in the browser, and every real request
+        # would cost 2x. Even while fully rate-limited, OPTIONS sails through.
+        check("rate limit: OPTIONS preflight exempt while rate-limited",
+              client.options("/translate/batch",
+                             headers={"Origin": "http://192.168.1.2:8083"}).status_code != 429)
+    finally:
+        server.BT_AUTH_RATE_LIMIT_PER_MINUTE = original_auth_limit
+        server._rate_limit_store.clear()
+        server._auth_rate_limit_store.clear()
 
     # ── Audit-fix regression tests (2026-07-02) ──────────────────────────
 
@@ -508,20 +552,29 @@ def run():
     bad_pairs = [k for k in stats_after["language_pairs"] if k.startswith(("English→English", "Spanish→Spanish"))]
     check("audit B2: cache has no source==target entries", bad_pairs == [])
 
-    # B3: /stats must be reachable while the per-client rate limit is
-    # exhausted, so operators can monitor an attack. /metrics and /ping
-    # were already exempt; this test guards the new exemption.
-    server._rate_limit_store.clear()
-    limit = server.RATE_LIMIT_MAX
-    for i in range(limit):
-        client.post("/translate", json={"text": f"b3burn{i}"})
-    over = client.post("/translate", json={"text": "blocked"})
-    check("audit B3 setup: /translate returns 429 after burst", over.status_code == 429)
-    s = client.get("/stats")
-    check("audit B3: /stats reachable during rate-limit storm", s.status_code == 200)
-    check("audit B3: /stats returns stats JSON during rate-limit storm",
-          isinstance(s.get_json(), dict) and "total_entries" in s.get_json())
-    server._rate_limit_store.clear()
+    # B3: observability bypasses exhausted translation work, but still consumes
+    # the authentication-admission budget and passes the auth authority.
+    original_b3_auth_limit = server.BT_AUTH_RATE_LIMIT_PER_MINUTE
+    try:
+        server._rate_limit_store.clear()
+        server._auth_rate_limit_store.clear()
+        limit = server.RATE_LIMIT_MAX
+        server.BT_AUTH_RATE_LIMIT_PER_MINUTE = limit + 2
+        for i in range(limit):
+            client.post("/translate", json={"text": f"b3burn{i}"})
+        over = client.post("/translate", json={"text": "blocked"})
+        check("audit B3 setup: /translate returns 429 after burst", over.status_code == 429)
+        s = client.get("/stats")
+        check("audit B3: /stats remains reachable during an API-work storm",
+              s.status_code == 200 and "db_size_mb" in s.get_json())
+        exhausted = client.get("/stats")
+        check("audit B3: /stats still enforces authentication admission",
+              exhausted.status_code == 429
+              and exhausted.get_json().get("scope") == "auth_admission")
+    finally:
+        server.BT_AUTH_RATE_LIMIT_PER_MINUTE = original_b3_auth_limit
+        server._rate_limit_store.clear()
+        server._auth_rate_limit_store.clear()
 
     # B4: cache key must include the model. Two cache keys computed for the
     # same text+lang with different models must be DISTINCT, otherwise

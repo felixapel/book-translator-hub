@@ -13,6 +13,12 @@ each enabled reader's `BT_<READER>_PUBLIC_ORIGIN`, `READER_UPSTREAM`,
 `READER_CONNECTOR_ID` and `PUBLISHED_PORT`. Hub authentication is exactly
 `reader-session`; Authentik-forwarded identity remains split-only.
 
+Hub public origins are exact HTTPS origins. The managed same-origin proxy does
+not need a CORS exception. If a low-level cross-origin client is deliberately
+configured, list every allowed origin exactly in `BT_ALLOWED_ORIGINS`; private
+addresses, subnets and wildcards are never granted automatically. Cookie-backed
+unsafe browser writes require the exact `BT_PUBLIC_ORIGIN` request origin.
+
 Shared `LLM_*` and `BT_LOCAL_URL` values apply to every enabled reader. A
 present `BT_CWA_LLM_*`/`BT_CWA_LOCAL_URL` or
 `BT_KAVITA_LLM_*`/`BT_KAVITA_LOCAL_URL` replaces the corresponding shared
@@ -25,6 +31,7 @@ all enabled-reader allocations without exceeding the total.
 
 | Variable | Purpose |
 |---|---|
+| `BT_TOPOLOGY` | Set to `hub` for the universal topology. |
 | `BT_INSTALL_PROFILE` | `unraid` or `compose-existing`. The stock reader always remains external. |
 | `BT_INSTALL_NAME` | Stable prefix for owned translator resources. Choose once. |
 | `BT_INGRESS_MODE` | `published` exposes only the proxy; `docker-edge` publishes neither role. |
@@ -36,14 +43,14 @@ all enabled-reader allocations without exceeding the total.
 | `BT_READER_UPSTREAM` | Exact stock reader origin: CWA port `8083` or Kavita port `5000`. |
 | `BT_READER_CONTAINER` | Exact running stock reader container name. |
 | `BT_READER_NETWORK` | One existing Docker network joined by the reader. |
-| `BT_READER_VERSION` | Exact reader version observed by the install. Kavita accepts only `0.9.0.2`. |
+| `BT_READER_VERSION` | Exact reader version observed by the install. Use only an exact documented Kavita contract; the hub sample defaults to `0.9.0.2`. |
 | `BT_READER_IMAGE_ID` | Optional exact `sha256:<64 lowercase hex>` runtime image ID. Required when the reader container uses a mutable tag and has no exact application-version label. |
 | `BT_CWA_IDENTITY_HEADER` | Exact reverse-proxy identity header configured in CWA; the managed proxy strips client copies. |
 | `BT_STATE_DIR` | Private lifecycle state outside the checkout. |
 | `BT_DATA_DIR` | Private translation data outside the checkout. |
 | `BT_BACKUP_DIR` | Backup root outside appdata/data. |
 | `BT_UNRAID_TEMPLATE_DIR` | DockerMan user-template directory for the Unraid profile. |
-| `LLM_PROVIDER` | `local`, a fixed named adapter, or `openai-compatible`. The split example defaults to local; the hub example selects Gemini explicitly. |
+| `LLM_PROVIDER` | `local`, a fixed named adapter, or `openai-compatible`. Both managed examples default to local; select a named remote adapter explicitly in the private environment. |
 | `LLM_MODEL` | Provider model identifier. |
 | `BT_LOCAL_URL` | Shared absolute `/v1/chat/completions` endpoint when either role is `local`. |
 | `LLM_API_KEY` | Primary named-provider credential; empty for `local` and `openai-compatible`, which uses its dedicated key variable. |
@@ -174,8 +181,9 @@ standalone Compose example accepts the same environment names.
 | `BT_TRUSTED_PROXIES` | empty | Reviewed peers allowed to provide observed client context. |
 | `BT_TRUSTED_PROXY_HOST` | empty | Managed single proxy authority for strong CWA sessions. |
 | `BT_TRUST_PROXY` | `false` | Unsafe legacy rate-limit compatibility; not an auth authority. |
-| `BT_ALLOWED_ORIGINS` | local defaults | Exact origins for low-level cross-origin deployments. |
-| `BT_ALLOW_PRIVATE_LAN` | `true` | Broad private-origin convenience for non-cookie modes only. |
+| `BT_ALLOWED_ORIGINS` | empty | Comma-separated exact HTTP(S) origins for deliberate low-level cross-origin deployments. No wildcard, private-subnet or automatic LAN grant exists. |
+| `BT_PUBLIC_ORIGIN` | empty | Required exact HTTP(S) origin for cookie-authenticated unsafe browser writes; managed readers derive it from their per-reader public origin. |
+| `BT_ALLOW_PRIVATE_LAN` | unsupported | It does not grant browser origins; configure each exact allowed origin explicitly. |
 
 The managed proxy replaces inbound forwarding chains with the peer it observed.
 Raw reader proof can reach only the exact session-exchange route. The broker
@@ -221,11 +229,11 @@ budget and the transport connects to the vetted address while retaining TLS
 hostname verification, closing DNS-rebinding races. Use `local` for LAN services.
 
 The named adapters are `openai`, `anthropic`, `gemini`, `groq`, `together`,
-`minimax`, `deepseek` and `openrouter`. For Gemini, the hub example uses the
-stable `gemini-3.5-flash-lite` model and a Google AI Studio/project API key;
-`BT_LOCAL_URL` may remain empty. Restrict the key to the Gemini API and keep it
-only in the private server-side environment. Consumer ChatGPT, Codex, Gemini or
-Antigravity subscriptions and browser sessions are not supported API auth.
+`minimax`, `deepseek` and `openrouter`. The hub sample uses a local provider and
+no key. For Gemini, use a Google AI Studio/project API key and leave
+`BT_LOCAL_URL` empty. Restrict the key to the Gemini API and keep it only in the
+private server-side environment. Consumer ChatGPT, Codex, Gemini or Antigravity
+subscriptions and browser sessions are not supported API auth.
 
 Automatic retry and fallback are limited to connection/DNS timeouts and HTTP
 `408`, `429`, `500`, `502`, `503` and `504`. Configuration failures, TLS
@@ -242,7 +250,7 @@ filesystem controls. Managed operators set `BT_DATA_DIR`; `btctl` and the image
 derive those internal values and their ownership policy.
 
 
-### Real-Time Streaming and High-Capacity Caching (v2.4.0+)
+### Streaming and caching
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -251,5 +259,8 @@ derive those internal values and their ownership policy.
 | `BT_CACHE_TTL_DAYS` | `90` | Automatic expiration window for SQLite translation cache entries. |
 | `BT_CACHE_MAX_ENTRIES` | `100000` | Hard cap on total cached segments before oldest entries are pruned. |
 
-The server automatically enables SQLite Write-Ahead Logging (`WAL`) mode with a `256MB` memory-mapped I/O window (`mmap_size = 268435456`) and `64MB` page cache (`cache_size = -64000`), ensuring response times below `0.5ms` for cached hits.
+The server enables SQLite Write-Ahead Logging (`WAL`) mode with a `256MB`
+memory-mapped I/O window (`mmap_size = 268435456`) and `64MB` page cache
+(`cache_size = -64000`). These settings reduce contention but do not establish
+a latency guarantee; measure the target storage and workload before tuning.
 

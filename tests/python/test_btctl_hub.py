@@ -167,6 +167,19 @@ class HubBtctlTests(unittest.TestCase):
         self.assertNotIn("fake-test-secret", json.dumps(payload))
         self.assertEqual(payload["resources"]["hub"]["published_ports"], [8385, 8386])
 
+    def test_kavita_0_9_1_4_hub_plan_keeps_the_exact_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            values = hub_values(Path(directory))
+            values["BT_KAVITA_READER_VERSION"] = "0.9.1.4"
+            plan = HubPlan.from_config(
+                HubInstallConfig.from_mapping(values, IDENTITY)
+            )
+
+        self.assertEqual(plan.readers["kavita"]["version"], "0.9.1.4")
+        self.assertEqual(
+            plan.readers["kavita"]["contract"], "kavita-0.9.1.4-epub-v1"
+        )
+
     def test_reader_upstream_must_match_declared_external_container(self):
         with tempfile.TemporaryDirectory() as directory:
             values = hub_values(Path(directory))
@@ -386,6 +399,35 @@ class HubBtctlTests(unittest.TestCase):
                 [("reader-auth", "cwa"), ("reader-auth", "kavita")],
             )
             self.assertEqual(docker.calls.count("sqlite"), 2)
+
+            hub_tmpfs = docker.hub["HostConfig"]["Tmpfs"]
+            hub_tmpfs["/tmp"] = "rw,noexec,nosuid,size=128m,uid=101,gid=102,mode=700"
+            self.assertEqual(
+                HubInstaller(docker)._verify_hub(
+                    config,
+                    state.install_id,
+                    require_healthy=True,
+                    expected_image_id=docker.image["Id"],
+                )["Id"],
+                "hub-container-id",
+            )
+            for tmpfs in (
+                "rw,noexec,nosuid,size=64m,uid=101,gid=102,mode=700",
+                "rw,noexec,nosuid,size=256m,uid=101,gid=102,mode=700",
+                "rw,noexec,nosuid,uid=101,gid=102,mode=700",
+                "rw,noexec,nosuid,size=128m,uid=101,gid=102,mode=700,exec",
+            ):
+                with self.subTest(tmpfs=tmpfs):
+                    hub_tmpfs["/tmp"] = tmpfs
+                    with self.assertRaisesRegex(
+                        InstallError, "hub container sandbox does not match"
+                    ):
+                        HubInstaller(docker)._verify_hub(
+                            config,
+                            state.install_id,
+                            require_healthy=True,
+                            expected_image_id=docker.image["Id"],
+                        )
 
     def test_failed_hub_cleanup_is_recorded_and_reported(self):
         class Docker:

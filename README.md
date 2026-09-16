@@ -5,17 +5,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/felixapel/book-translator-hub/releases/latest"><img src="https://img.shields.io/badge/Release-2.4.0-0ea5e9.svg?style=flat-square" alt="Latest Release"></a>
+  <a href="https://github.com/felixapel/book-translator-hub/actions"><img src="https://img.shields.io/badge/CI-gated-0ea5e9.svg?style=flat-square" alt="CI-gated"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square" alt="License: GPL-3.0"></a>
   <img src="https://img.shields.io/badge/Python-3.11-3776ab.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.11">
   <img src="https://img.shields.io/badge/Docker-Multi--Arch-2496ed.svg?style=flat-square&logo=docker&logoColor=white" alt="Docker">
-  <img src="https://img.shields.io/badge/Tests-539%20Passing-10b981.svg?style=flat-square" alt="539 Tests Passing">
   <a href="https://github.com/sponsors/felixapel"><img src="https://img.shields.io/badge/Sponsor-GitHub-ea4aaa.svg?style=flat-square&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors"></a>
   <a href="https://ko-fi.com/felixapel"><img src="https://img.shields.io/badge/Donate-Ko--fi-ff5e5b.svg?style=flat-square&logo=kofi&logoColor=white" alt="Ko-fi"></a>
 </p>
 
 <p align="center">
-  <b>Universal, zero-wait bilingual reading overlay and translation engine for Calibre-Web, Kavita, and self-hosted ebook libraries powered by local or cloud LLMs.</b>
+  <b>Bilingual reading overlay and translation engine for stock Calibre-Web-Automated and Kavita EPUB readers, powered by local or cloud LLMs.</b>
 </p>
 
 ---
@@ -26,20 +25,19 @@
 
 ## ✨ What it does
 
-- **Real-Time Token Streaming (SSE):** Translates the first visible paragraph with Server-Sent Events (SSE), streaming words into the reader DOM in **~160ms** as the LLM generates them.
-- **Instant Viewport Rush:** Concurrently translates paragraphs 1, 2, and 3 in parallel micro-batches via Continuous Batching on local GPU (vLLM) or cloud providers.
-- **Zero-Wait Directional Lookahead:** Intelligently pre-translates upcoming pages along the reader's directional trajectory for an instantaneous 0ms page-turn experience.
-- **High-Capacity IndexedDB Cache:** Stores thousands of translated paragraphs offline directly in the browser (`BookTranslatorDB`), bypassing standard 5MB `localStorage` limitations.
-- **High-Throughput SQLite WAL Engine:** Server-side cache tuned with 256MB memory-mapping (`mmap_size`) and 64MB RAM page cache for **sub-millisecond (<0.5ms)** lookups.
-- **Intelligent Language Engine & Seamless UX:** Automatic source language detection from EPUB metadata/HTML (with manual override in Settings), plus an interactive target language dropdown with directional indicator (`→`) right on the floating toolbar.
-- **Dedicated E-Ink Mode:** 1-bit high-contrast layout without animations, blurring, or drop shadows, perfectly optimized for e-readers (Kindle, Kobo, Onyx Boox).
-- **Universal Multi-Reader Support:** Seamless native integration with stock [Calibre-Web-Automated](https://github.com/crocodilestick/Calibre-Web-Automated) and pinned [Kavita](https://github.com/Kareadita/Kavita) EPUB readers without altering either upstream image.
-- **Zero-Trust Privacy & Security:** Keeps all LLM API tokens and server endpoints strictly isolated on the internal network; no client-side credential leakage.
+- **Streaming and visible-work priority:** Streams eligible first-paragraph output and prioritizes visible paragraphs ahead of bounded background work. Actual latency depends on the reader, provider, model, network and cache state.
+- **Bounded lookahead:** Can pre-translate a limited forward window while keeping visible requests ahead of background work. It is not a page-turn latency guarantee.
+- **Layered cache:** Uses an in-memory reading cache and a private SQLite cache. Optional browser persistence is controlled by the server-owned reader configuration and may be unavailable when browser storage is constrained.
+- **SQLite WAL configuration:** Uses WAL, bounded busy timeouts, a memory-mapped I/O window and page cache settings. Operators should measure cache behavior on their own storage and workload.
+- **Language and reading controls:** Detects source language from reader metadata/HTML with a manual override, plus a target-language selector on the floating toolbar.
+- **E-Ink display mode:** Provides a high-contrast, low-motion presentation intended for compatible e-readers; verify it on the target browser and device.
+- **Versioned reader connectors:** Integrates with stock [Calibre-Web-Automated](https://github.com/crocodilestick/Calibre-Web-Automated) and exact Kavita EPUB contracts without modifying upstream images. See the compatibility matrix for acceptance limits.
+- **Server-side provider credentials:** Managed configurations keep API keys in the private server environment. Browser configuration omits provider keys; operators must protect their environment files and proxy boundary.
 
 ---
 
 <p align="center">
-  <img src="docs/assets/architecture-pipeline.jpg" alt="Zero-Wait Reading Pipeline Architecture" width="100%">
+  <img src="docs/assets/architecture-pipeline.jpg" alt="Reading Pipeline Architecture" width="100%">
 </p>
 
 ---
@@ -60,7 +58,8 @@ keys and cookies:
 ```bash
 git clone https://github.com/felixapel/book-translator-hub.git book-translator-hub
 cd book-translator-hub
-git switch --detach v2.4.0
+# Select an immutable published tag from the GitHub Releases page before installing.
+git switch --detach vX.Y.Z
 ```
 
 Copy the managed configuration outside the checkout and make it private:
@@ -72,27 +71,27 @@ chmod 0600 /absolute/private/path/book-translator-hub.env
 ```
 
 Set each enabled reader's exact container, network, version, public origin and
-storage paths. The template defaults to Google's stable, low-latency Gemini
-model; add a server-side Google AI Studio or project API key and leave the
-local URL empty:
+storage paths. The managed template defaults to a local OpenAI-compatible
+provider. Replace its placeholder endpoint and model in the private copy:
 
 ```dotenv
 BT_ENABLE_CWA=true
 BT_ENABLE_KAVITA=true
-LLM_PROVIDER=gemini
-LLM_MODEL=gemini-3.5-flash-lite
-LLM_API_KEY=<Google AI Studio or project API key>
-BT_LOCAL_URL=
-BT_BATCH_SIZE=10
-BT_BATCH_SOURCE_TOKEN_BUDGET=450
-BT_BATCH_MAX_TOKENS=1200
-BT_CLIENT_PREFETCH_GAP_MS=1000
+LLM_PROVIDER=local
+LLM_MODEL=local-model
+LLM_API_KEY=
+BT_LOCAL_URL=http://local-llm:8000/v1/chat/completions
+BT_BATCH_SIZE=5
+BT_BATCH_SOURCE_TOKEN_BUDGET=0
+BT_BATCH_MAX_TOKENS=8192
 BT_MAX_BATCH_PARAGRAPHS=50
 ```
 
-Named providers use their fixed HTTPS API endpoints. Local and custom
-OpenAI-compatible backends are also supported through environment variables;
-they are optional, not required fallbacks. Then run:
+Named remote providers, including Gemini, use their fixed HTTPS API endpoints
+and a server-side API key. Local and custom OpenAI-compatible backends are
+also supported through environment variables; select a cloud provider only in
+the private environment after reviewing its privacy and quota implications.
+Then run:
 
 ```bash
 ./btctl plan --env /absolute/private/path/book-translator-hub.env
@@ -144,29 +143,12 @@ their documented boundaries. Do not publish the API, disable authentication,
 or add a route that bypasses the managed proxy. Advanced CWA Authentik
 deployments have a separate fail-closed profile and guide.
 
-CWA is the current stable release target. The stock Kavita v0.9.0.2 EPUB
-connector is contract- and CI-certified in this checkout, but remains a
-candidate until physical Unraid and real-reader browser acceptance is recorded.
-Manga, PDF and library writeback are not supported.
-
-## ⚡ High-Throughput Batching & Model Optimization
-
-Empirical benchmarking across large language models has established optimal token economics for paragraph translation:
-
-| Backend / Model | Avg Latency (20 paragraphs) | Parser Pass Rate | Recommended Batch Size |
-| :--- | :---: | :---: | :---: |
-| **Groq (`openai/gpt-oss-120b`)** | **1.03s** | **100%** | **20** |
-| **Local vLLM (`gemma4-12b`)** | **2.34s** | **100%** | **20** |
-| **Gemini (`gemini-3.5-flash-lite`)** | **0.61s - 3.5s** | **100%** | **20** |
-
-### SQLite High-Concurrency WAL Engine
-To eliminate database contention under concurrent batch reading, the SQLite cache runs in **Write-Ahead Logging (WAL)** mode:
-```sql
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA busy_timeout = 5000;
-```
-Response latency on cached paragraphs drops to **< 0.5ms**.
+CWA `4.0.6` is the exact CWA contract reference; each deployed candidate still
+requires browser acceptance. Kavita has separate exact `0.9.0.2` and
+`0.9.1.4` contracts; the `0.9.1.4` native account/broker fixture does not
+establish browser or OIDC acceptance. See the
+[compatibility matrix](docs/reference/compatibility.md) before choosing a
+reader version. Manga, PDF and library writeback are not supported.
 
 ## 💖 Sponsors & Community Support
 

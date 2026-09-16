@@ -132,7 +132,7 @@ const server = http.createServer((request, response) => {
     }
     if (url.pathname === '/chapter/1') {
         response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        response.end(`<!doctype html><html><body>
+        response.end(`<!doctype html><html lang="en"><body>
           <main class="chapter">
             <p id="paragraph-one">A quiet production test paragraph.</p>
             <p id="paragraph-two">A second paragraph checks queue order.</p>
@@ -178,7 +178,7 @@ const server = http.createServer((request, response) => {
           <script src="/bt-static/loader.js?v=e2e"></script>
         </head><body>
           <main class="book-container">
-            <div class="book-content"><p id="kavita-paragraph">A Kavita EPUB paragraph.</p></div>
+            <div class="book-content" data-bt-book-language="en"><p id="kavita-paragraph">A Kavita EPUB paragraph.</p></div>
           </main>
         </body></html>`);
         return;

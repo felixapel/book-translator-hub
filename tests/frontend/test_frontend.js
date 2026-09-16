@@ -98,6 +98,7 @@ const dom = new JSDOM(`
 });
 
 const iframeDoc = dom.window.document.querySelector("iframe").contentDocument;
+iframeDoc.documentElement.lang = 'en';
 // The paragraphs live inside a <section class="chapter"> wrapper — the shape
 // Calibre-converted epubs actually ship. The wrapper matches the
 // [class*="chapter"] candidate selector; a regression here means the whole
@@ -153,6 +154,7 @@ async function captureAuthTransport(config, enableCloudFallback = false) {
     authDom.window.requestAnimationFrame = (cb) => setTimeout(cb, 0);
 
     const authDoc = authDom.window.document.querySelector('iframe').contentDocument;
+    authDoc.documentElement.lang = 'en';
     authDoc.body.innerHTML = '<p>credential transport probe</p>';
     authDoc.querySelector('p').getBoundingClientRect = () => ({
         width: 100, height: 20, left: 0, top: 0
@@ -280,6 +282,7 @@ async function assertStalePolicyIsRefetchedWithoutTranslationReplay() {
     staleDom.window.localStorage.setItem('bt_prefetch', '0');
     staleDom.window.localStorage.setItem('bt_lang', 'Spanish');
     staleDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    staleDom.window.document.querySelector('iframe').contentDocument.documentElement.lang = 'en';
     const paragraph = staleDom.window.document.querySelector('iframe')
         .contentDocument.body.appendChild(
             staleDom.window.document.querySelector('iframe')
@@ -348,6 +351,7 @@ async function assertAmbiguous429IsTerminal() {
     retryDom.window.localStorage.setItem('bt_prefetch', '0');
     retryDom.window.localStorage.setItem('bt_lang', 'Spanish');
     retryDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    retryDom.window.document.querySelector('iframe').contentDocument.documentElement.lang = 'en';
     const paragraph = retryDom.window.document.querySelector('iframe')
         .contentDocument.body.appendChild(
             retryDom.window.document.querySelector('iframe')
@@ -410,6 +414,7 @@ async function assertConfiguredBatchSizeIsUsed() {
     batchDom.window.localStorage.setItem('bt_lang', 'Spanish');
     batchDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
     const document = batchDom.window.document.querySelector('iframe').contentDocument;
+    document.documentElement.lang = 'en';
     document.body.innerHTML = '<p>one</p><p>two</p><p>three</p><p>four</p><p>five</p>';
     document.querySelectorAll('p').forEach(paragraph => {
         paragraph.getBoundingClientRect = () => ({
@@ -463,6 +468,7 @@ async function assertSafe429RetryBoundSurvivesRediscovery() {
     retryDom.window.localStorage.setItem('bt_lang', 'Spanish');
     retryDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
     const document = retryDom.window.document.querySelector('iframe').contentDocument;
+    document.documentElement.lang = 'en';
     document.body.innerHTML = '<p>stable rate-limit paragraph</p>';
     document.querySelector('p').getBoundingClientRect = () => ({
         width: 100, height: 20, left: 0, top: 0
@@ -525,6 +531,7 @@ async function assertVisibleWorkInterruptsPrefetchDelay() {
     pacingDom.window.localStorage.setItem('bt_lang', 'Spanish');
     pacingDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
     const document = pacingDom.window.document.querySelector('iframe').contentDocument;
+    document.documentElement.lang = 'en';
     document.body.innerHTML = '<p id="first">first visible</p><p id="background">background</p>';
     document.getElementById('first').getBoundingClientRect = () => ({
         width: 100, height: 20, left: 0, top: 0
@@ -606,7 +613,7 @@ async function assertFeedbackControls() {
     // inside .bt-translation and polluted its textContent).
     const fbDom = new JSDOM(`<!DOCTYPE html><html><body>
       <main class="book-container">
-        <div class="book-content"><p id="fb-one">Feedback paragraph one.</p></div>
+        <div class="book-content" data-bt-book-language="en"><p id="fb-one">Feedback paragraph one.</p></div>
       </main>
     </body></html>`, {
         url: 'https://kavita.example.test/library/7/series/42/book/99',
@@ -711,7 +718,7 @@ async function assertOfflineResilience() {
     // offline status; reconnect -> the pending paragraph translates.
     const offDom = new JSDOM(`<!DOCTYPE html><html><body>
       <main class="book-container">
-        <div class="book-content"><p id="off-one">Offline paragraph one.</p></div>
+        <div class="book-content" data-bt-book-language="en"><p id="off-one">Offline paragraph one.</p></div>
       </main>
     </body></html>`, {
         url: 'https://kavita.example.test/library/7/series/42/book/99',
@@ -912,6 +919,9 @@ async function assertKavitaDirectLoaderContract() {
             runScripts: 'dangerously'
         }
     );
+    loaderDom.window.localStorage.setItem('kavita-user', JSON.stringify({
+        token: 'native-access-token'
+    }));
     const requests = [];
     loaderDom.window.fetch = async (url, options) => {
         requests.push({ url, options });
@@ -921,17 +931,25 @@ async function assertKavitaDirectLoaderContract() {
                 status: 200,
                 json: async () => ({
                     apiUrl: '/bt-api',
-                    authMode: 'cwa_session',
+                    authMode: 'reader_session',
                     credentials: 'same-origin',
                     readerType: 'kavita',
                     readerVersion: '0.9.1.4',
-                    readerContractVersion: 'kavita-0.9.0.2-epub-v1',
+                    readerContractVersion: 'kavita-0.9.1.4-epub-v1',
                     batchSize: 6,
                     prefetchGapMs: 0
                 })
             };
         }
-        throw new Error('unexpected fetch: ' + url);
+        assert.strictEqual(url, '/bt-api/session');
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+                status: 'ok', expires_in: 300,
+                reader_type: 'kavita', reader_version: '0.9.1.4'
+            })
+        };
     };
 
     const element = loaderDom.window.document.createElement('script');
@@ -952,22 +970,62 @@ async function assertKavitaDirectLoaderContract() {
             && Date.now() < deadline) await wait(10);
 
     assert(loaderDom.window.document.querySelector('script[src*="translator.js"]'),
-        'Kavita translator assets must load upon entering the reader route without requiring session exchange');
-    assert.strictEqual(requests.length, 1, 'Direct mode only fetches bt-config.json');
+        'The pinned 0.9.1.4 reader-session contract must load the Kavita overlay');
+    assert.strictEqual(requests.length, 2, 'Kavita must exchange a reader session before loading');
     assert.strictEqual(loaderDom.window.BOOK_TRANSLATOR.readerType, 'kavita');
     assert.strictEqual(loaderDom.window.BOOK_TRANSLATOR.readerVersion, '0.9.1.4');
     assert.strictEqual(
         loaderDom.window.BOOK_TRANSLATOR.readerContractVersion,
-        'kavita-0.9.0.2-epub-v1'
+        'kavita-0.9.1.4-epub-v1'
     );
     assert.strictEqual(loaderDom.window.BOOK_TRANSLATOR.batchSize, 6);
     loaderDom.window.close();
 }
 
+async function assertKavitaUnsupportedManagedConfigsAreRejected() {
+    const unsupportedConfigs = [
+        {
+            authMode: 'cwa_session', credentials: 'same-origin',
+            readerVersion: '0.9.1.4', readerContractVersion: 'kavita-0.9.1.4-epub-v1'
+        },
+        {
+            authMode: 'reader_session', credentials: 'same-origin',
+            readerVersion: '0.9.1.4', readerContractVersion: 'kavita-0.9.0.2-epub-v1'
+        },
+        {
+            authMode: 'reader_session', credentials: 'same-origin',
+            readerVersion: '0.9.2.0', readerContractVersion: 'kavita-0.9.2.0-epub-v1'
+        }
+    ];
+    for (const config of unsupportedConfigs) {
+        const loaderDom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
+            url: 'https://kavita.example.test/library/7/series/42/book/99', runScripts: 'dangerously'
+        });
+        loaderDom.window.console.error = () => {};
+        let configRequests = 0;
+        loaderDom.window.fetch = async (url) => {
+            assert.strictEqual(url, '/bt-config.json');
+            configRequests++;
+            return {
+                ok: true, status: 200,
+                json: async () => Object.assign({ apiUrl: '/bt-api', readerType: 'kavita' }, config)
+            };
+        };
+        const element = loaderDom.window.document.createElement('script');
+        element.textContent = loaderCode;
+        loaderDom.window.document.head.appendChild(element);
+        await wait(30);
+        assert.strictEqual(configRequests, 1, 'The managed configuration must be fetched once');
+        assert.strictEqual(loaderDom.window.document.querySelectorAll('script[src*="translator.js"]').length, 0,
+            `Unsupported Kavita configuration must fail closed: ${JSON.stringify(config)}`);
+        loaderDom.window.close();
+    }
+}
+
 async function assertKavitaReaderAdapterContract() {
     const kavitaDom = new JSDOM(`<!DOCTYPE html><html><body>
       <main class="book-container">
-        <div class="book-content"><p id="kavita-one">Kavita paragraph one.</p></div>
+        <div class="book-content" data-bt-book-language="en"><p id="kavita-one">Kavita paragraph one.</p></div>
       </main>
     </body></html>`, {
         url: 'https://kavita.example.test/library/7/series/42/book/99',
@@ -1048,6 +1106,237 @@ async function assertKavitaReaderAdapterContract() {
     assert.strictEqual(payloads.length, callsBeforeManga,
         'Kavita manga/PDF routes must never send content for translation');
     kavitaDom.window.close();
+}
+
+async function assertReaderSafetyAndLanguageResolution() {
+    // A CWA shell may contain arbitrary text while an EPUB iframe is still
+    // loading. It is never book content and must not reach the API.
+    const shellDom = new JSDOM(`<!DOCTYPE html><html lang="en"><body>
+      <main><p id="shell-decoy">Host page text must stay local.</p></main>
+    </body></html>`, {
+        url: 'https://reader.example.test/read/no-iframe', runScripts: 'dangerously'
+    });
+    shellDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api', authMode: 'cwa_session', credentials: 'same-origin'
+    };
+    shellDom.window.localStorage.setItem('bt_mode', 'bilingual');
+    shellDom.window.localStorage.setItem('bt_prefetch', '0');
+    let shellRequests = 0;
+    shellDom.window.fetch = async (url) => {
+        if (String(url).endsWith('/provider-policy')) {
+            return {
+                ok: true, status: 200,
+                json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+                headers: { get: () => null }
+            };
+        }
+        shellRequests++;
+        return { ok: true, status: 200, json: async () => ({ translations: [] }), headers: { get: () => null } };
+    };
+    const shellScript = shellDom.window.document.createElement('script');
+    shellScript.textContent = code;
+    shellDom.window.document.body.appendChild(shellScript);
+    await wait(120);
+    assert.strictEqual(shellRequests, 0,
+        'CWA must wait for a readable EPUB iframe instead of translating host-page text');
+    shellDom.window.close();
+
+    async function captureKavitaSource(bookLanguage, attribute = 'data-bt-book-language') {
+        const attr = bookLanguage ? ` ${attribute}="${bookLanguage}"` : '';
+        const kavitaDom = new JSDOM(`<!DOCTYPE html><html lang="en"><body>
+          <main><div class="book-content"${attr}><p>Book-only language probe.</p></div></main>
+        </body></html>`, {
+            url: 'https://kavita.example.test/library/7/series/42/book/101', runScripts: 'dangerously'
+        });
+        kavitaDom.window.BOOK_TRANSLATOR = {
+            apiUrl: '/bt-api', authMode: 'reader_session', credentials: 'same-origin',
+            readerType: 'kavita', readerVersion: '0.9.1.4',
+            readerContractVersion: 'kavita-0.9.1.4-epub-v1'
+        };
+        kavitaDom.window.localStorage.setItem('bt_mode', 'bilingual');
+        kavitaDom.window.localStorage.setItem('bt_prefetch', '0');
+        kavitaDom.window.localStorage.setItem('bt_lang', 'Spanish');
+        kavitaDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+        const payloads = [];
+        kavitaDom.window.fetch = async (url, options) => {
+            if (String(url).endsWith('/provider-policy')) {
+                return {
+                    ok: true, status: 200,
+                    json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+                    headers: { get: () => null }
+                };
+            }
+            payloads.push(JSON.parse(options.body));
+            return {
+                ok: true, status: 200,
+                json: async () => ({ translations: ['translated'] }), headers: { get: () => null }
+            };
+        };
+        const paragraph = kavitaDom.window.document.querySelector('.book-content p');
+        paragraph.getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
+        const script = kavitaDom.window.document.createElement('script');
+        script.textContent = code;
+        kavitaDom.window.document.body.appendChild(script);
+        await wait(160);
+        return { kavitaDom, payloads };
+    }
+
+    const traditional = await captureKavitaSource('zh-Hant', 'lang');
+    assert.strictEqual(traditional.payloads.length, 1,
+        'A language attribute on Kavita book content must permit auto translation');
+    assert.strictEqual(traditional.payloads[0].source_lang, 'Chinese (Traditional)',
+        'zh-Hant must remain distinct from simplified Chinese');
+    traditional.kavitaDom.window.close();
+
+    const unknown = await captureKavitaSource(null);
+    assert.strictEqual(unknown.payloads.length, 0,
+        'Kavita shell html language must not be treated as book language');
+    assert.match(unknown.kavitaDom.window.document.querySelector('#bt-status-text').textContent,
+        /select a source language/i,
+        'Unknown source language must request a manual selection before translation');
+    unknown.kavitaDom.window.close();
+}
+
+async function assertBookPreferencesFollowSpaNavigation() {
+    const navDom = new JSDOM(`<!DOCTYPE html><html><body>
+      <main><div class="book-content" data-bt-book-language="en"><p>Book A text.</p></div></main>
+    </body></html>`, {
+        url: 'https://kavita.example.test/library/7/series/42/book/99', runScripts: 'dangerously'
+    });
+    navDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api', authMode: 'reader_session', credentials: 'same-origin',
+        readerType: 'kavita', readerVersion: '0.9.0.2',
+        readerContractVersion: 'kavita-0.9.0.2-epub-v1'
+    };
+    navDom.window.localStorage.setItem('bt_mode', 'off');
+    navDom.window.localStorage.setItem('bt_lang', 'Spanish');
+    navDom.window.localStorage.setItem('bt_prefetch', '0');
+    navDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const paragraph = navDom.window.document.querySelector('.book-content p');
+    paragraph.getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
+    navDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) {
+            return {
+                ok: true, status: 200,
+                json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+                headers: { get: () => null }
+            };
+        }
+        const payload = JSON.parse(options.body);
+        return {
+            ok: true, status: 200,
+            json: async () => ({ translations: payload.paragraphs.map(() => 'translated') }),
+            headers: { get: () => null }
+        };
+    };
+    const script = navDom.window.document.createElement('script');
+    script.textContent = code;
+    navDom.window.document.body.appendChild(script);
+    await wait(30);
+
+    const target = navDom.window.document.getElementById('bt-lang');
+    target.value = 'French';
+    target.dispatchEvent(new navDom.window.Event('change', { bubbles: true }));
+    navDom.window.document.getElementById('bt-toggle').click();
+    await wait(30);
+
+    navDom.window.history.pushState({}, '', '/library/7/series/42/book/100');
+    navDom.window.dispatchEvent(new navDom.window.CustomEvent('bt:reader-route'));
+    await wait(30);
+    assert.strictEqual(navDom.window.document.getElementById('bt-toggle-label').textContent, 'Original',
+        'Book B must not inherit Book A translation mode');
+    assert.strictEqual(navDom.window.document.getElementById('bt-lang').value, 'Spanish',
+        'Book B must start from the captured legacy target default');
+
+    const targetB = navDom.window.document.getElementById('bt-lang');
+    targetB.value = 'German';
+    targetB.dispatchEvent(new navDom.window.Event('change', { bubbles: true }));
+    navDom.window.document.getElementById('bt-toggle').click();
+    await wait(30);
+
+    navDom.window.history.pushState({}, '', '/library/7/series/42/book/99');
+    navDom.window.dispatchEvent(new navDom.window.CustomEvent('bt:reader-route'));
+    await wait(30);
+    assert.strictEqual(navDom.window.document.getElementById('bt-toggle-label').textContent, 'Bilingual',
+        'Returning to Book A must restore its mode after A → B → A navigation');
+    assert.strictEqual(navDom.window.document.getElementById('bt-lang').value, 'French',
+        'Returning to Book A must restore its target language');
+    navDom.window.close();
+}
+
+async function assertSpaNavigationWaitsForDestinationContent() {
+    const navDom = new JSDOM(`<!DOCTYPE html><html><body>
+      <main><div class="book-content" data-bt-book-language="en"><p id="book-a">Book A must not be sent as Book B.</p></div></main>
+    </body></html>`, {
+        url: 'https://kavita.example.test/library/7/series/42/book/99', runScripts: 'dangerously'
+    });
+    navDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api', authMode: 'reader_session', credentials: 'same-origin',
+        readerType: 'kavita', readerVersion: '0.9.0.2',
+        readerContractVersion: 'kavita-0.9.0.2-epub-v1'
+    };
+    navDom.window.localStorage.setItem('bt_book_7:42:99_bt_mode', 'bilingual');
+    navDom.window.localStorage.setItem('bt_book_7:42:99_bt_lang', 'French');
+    navDom.window.localStorage.setItem('bt_book_7:42:100_bt_mode', 'bilingual');
+    navDom.window.localStorage.setItem('bt_book_7:42:100_bt_lang', 'German');
+    navDom.window.localStorage.setItem('bt_prefetch', '0');
+    navDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const visible = (element) => {
+        element.getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
+    };
+    visible(navDom.window.document.getElementById('book-a'));
+    const payloads = [];
+    navDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) {
+            return {
+                ok: true, status: 200,
+                json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+                headers: { get: () => null }
+            };
+        }
+        const payload = JSON.parse(options.body);
+        payloads.push(payload);
+        return {
+            ok: true, status: 200,
+            json: async () => ({ translations: payload.paragraphs.map(() => 'translated') }),
+            headers: { get: () => null }
+        };
+    };
+    const script = navDom.window.document.createElement('script');
+    script.textContent = code;
+    navDom.window.document.body.appendChild(script);
+    let deadline = Date.now() + 1000;
+    while (!payloads.some(payload => payload.paragraphs.includes('Book A must not be sent as Book B.'))
+            && Date.now() < deadline) await wait(10);
+    payloads.length = 0;
+
+    navDom.window.history.pushState({}, '', '/library/7/series/42/book/100');
+    navDom.window.dispatchEvent(new navDom.window.CustomEvent('bt:reader-route'));
+    // Simulate the route update arriving before Angular replaces the current
+    // .book-content node. This is the production race: B preferences are
+    // active while A text remains mounted briefly.
+    await wait(450);
+    assert.strictEqual(payloads.length, 0,
+        'Destination preferences must not translate stale source-book content while waiting for DOM replacement');
+
+    const root = navDom.window.document.querySelector('.book-content');
+    const annotation = navDom.window.document.createElement('span');
+    annotation.textContent = 'Reader annotation loaded late';
+    root.appendChild(annotation);
+    await wait(450);
+    assert.strictEqual(payloads.length, 0,
+        'An unrelated mutation in the old book must not release the destination gate');
+    root.innerHTML = '<p id="book-b">Book B content arrives later.</p>';
+    visible(navDom.window.document.getElementById('book-b'));
+    deadline = Date.now() + 1000;
+    while (!payloads.some(payload => payload.paragraphs.includes('Book B content arrives later.'))
+            && Date.now() < deadline) await wait(10);
+    assert(payloads.some(payload => payload.target_lang === 'German'
+        && payload.paragraphs.includes('Book B content arrives later.')),
+    'A same-node book-content replacement must release the destination translation exactly after new content arrives');
+    assert(!payloads.some(payload => payload.paragraphs.includes('Book A must not be sent as Book B.')),
+        'No request may label stale Book A text with Book B preferences');
+    navDom.window.close();
 }
 
 async function runTest() {
@@ -1272,7 +1561,11 @@ async function runTest() {
 
     await assertKavitaSessionLoaderContract();
     await assertKavitaDirectLoaderContract();
+    await assertKavitaUnsupportedManagedConfigsAreRejected();
     await assertKavitaReaderAdapterContract();
+    await assertReaderSafetyAndLanguageResolution();
+    await assertBookPreferencesFollowSpaNavigation();
+    await assertSpaNavigationWaitsForDestinationContent();
 
     console.log("All assertions passed.");
     process.exit(0);

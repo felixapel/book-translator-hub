@@ -81,6 +81,25 @@ class HubConfigTests(unittest.TestCase):
             kavita.environment["BT_SESSION_COOKIE_NAME"],
             "__Host-bt-kavita-session",
         )
+        self.assertEqual(
+            kavita.environment["BT_ALLOWED_ORIGINS"], "https://kavita.example.test"
+        )
+
+    def test_kavita_0_9_1_4_uses_its_exact_api_and_browser_contract(self):
+        environment = dual_reader_environment()
+        environment["BT_KAVITA_READER_VERSION"] = "0.9.1.4"
+
+        config = HubConfig.from_environment(environment)
+        kavita = next(reader for reader in config.readers if reader.name == "kavita")
+
+        self.assertEqual(
+            kavita.environment["BT_READER_CONTRACT_VERSION"],
+            "kavita-0.9.1.4-epub-v1",
+        )
+        self.assertEqual(
+            kavita.proxy_environment["BT_READER_CONTRACT_VERSION"],
+            "kavita-0.9.1.4-epub-v1",
+        )
 
     def test_shared_provider_is_inherited_and_present_empty_override_clears_secret(self):
         config = HubConfig.from_environment(dual_reader_environment())

@@ -31,6 +31,10 @@ _INTERNAL_PORTS = {
     "cwa": (8391, 8080),
     "kavita": (8392, 8081),
 }
+_KAVITA_CERTIFIED_CONTRACTS = {
+    "0.9.0.2": "kavita-0.9.0.2-epub-v1",
+    "0.9.1.4": "kavita-0.9.1.4-epub-v1",
+}
 _PROVIDER_OVERRIDES = {
     "LLM_PROVIDER": "LLM_PROVIDER",
     "LLM_MODEL": "LLM_MODEL",
@@ -389,7 +393,7 @@ class HubConfig:
                 upstream_port=expected_upstream_port,
             )
             version = _required(values, prefix + "READER_VERSION")
-            if reader == "kavita" and version != "0.9.0.2":
+            if reader == "kavita" and version not in _KAVITA_CERTIFIED_CONTRACTS:
                 raise HubConfigError("Kavita reader version is not certified")
             if reader == "cwa" and not (
                 re.fullmatch(r"4\.[0-9]+\.[0-9]+", version) or version == "3.1.4"
@@ -430,12 +434,12 @@ class HubConfig:
                     ),
                     "BT_READER_VERSION": version,
                     "BT_READER_CONTRACT_VERSION": (
-                        "cwa-epub-v1"
-                        if reader == "cwa"
-                        else "kavita-0.9.0.2-epub-v1"
+                        "cwa-epub-v1" if reader == "cwa"
+                        else _KAVITA_CERTIFIED_CONTRACTS[version]
                     ),
                     "BT_READER_CONNECTOR_ID": connector_id,
                     "BT_PUBLIC_ORIGIN": public_origin,
+                    "BT_ALLOWED_ORIGINS": public_origin,
                     "BT_SESSION_KEY_PATH": f"/app/data/{reader}/reader_session_key",
                     "BT_SESSION_COOKIE_NAME": (
                         f"__Host-bt-{reader}-session"

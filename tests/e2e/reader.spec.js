@@ -50,8 +50,8 @@ test('Kavita activates only on the pinned EPUB route and refreshes one rejected 
             authMode: 'reader_session',
             credentials: 'same-origin',
             readerType: 'kavita',
-            readerVersion: '0.9.0.2',
-            readerContractVersion: 'kavita-0.9.0.2-epub-v1',
+            readerVersion: '0.9.1.4',
+            readerContractVersion: 'kavita-0.9.1.4-epub-v1',
         }),
     }));
     const exchanges = [];
@@ -70,7 +70,7 @@ test('Kavita activates only on the pinned EPUB route and refreshes one rejected 
             },
             body: JSON.stringify({
                 status: 'ok', expires_in: 300,
-                reader_type: 'kavita', reader_version: '0.9.0.2',
+                reader_type: 'kavita', reader_version: '0.9.1.4',
             }),
         });
     });
@@ -381,7 +381,7 @@ test('replacing an observed iframe attaches the new document before translation'
         document.querySelector('iframe[title="Book chapter"]').replaceWith(replacement);
         const doc = replacement.contentDocument;
         doc.open();
-        doc.write(`<!doctype html><html><body><main class="chapter">
+        doc.write(`<!doctype html><html lang="en"><body><main class="chapter">
           <p id="replacement-one">A replacement chapter paragraph.</p>
           <p id="replacement-two">A second replacement paragraph.</p>
         </main></body></html>`);

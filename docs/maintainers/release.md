@@ -66,15 +66,16 @@ Use an independent review for authentication, migration, Docker privilege,
 release-workflow or public-interface changes. A required failure blocks the
 candidate; fix it on the branch and let protected CI evaluate the new commit.
 
-## Merge and physical acceptance
+## Merge and required physical acceptance
 
 Open one scoped Gitea pull request and record the problem, risk, validation and
 rollback boundary. Merge only when all required contexts succeed on the exact
 head. Then fast-forward the canonical checkout and confirm protected `main` CI
 on the exact merge commit.
 
-Before tagging a runtime change, run physical stock-Unraid and browser
-acceptance on that exact commit. The source-built path must complete
+Before tagging a runtime change, the release operator must run physical
+stock-Unraid and browser acceptance on that exact commit. The source-built path
+must complete
 `plan -> install -> doctor`; the reader must translate a non-sensitive DRM-free
 EPUB through the public route. Record host, exact reader version and image,
 browser, LLM, commit/digest and result in the release issue without secrets.
@@ -85,7 +86,7 @@ again after reinstall because reader session keys are regenerated. A healthy
 `/ping`, `/health` or `/ready` response is process evidence only, not proof of
 translation or browser authentication.
 
-Record the physical gate with this complete template:
+Use this template for the release issue when the physical gate is performed:
 
 ```text
 Candidate tag:
@@ -104,9 +105,11 @@ Rollback/fix-forward result:
 Secrets/book content included: no
 ```
 
-For Kavita, also prove stock v0.9.0.2, exact EPUB route and `.book-content`,
-native login exchange, chapter navigation, reload, and inactivity on manga/PDF
-routes. When CWA and Kavita coexist, prove their names, ports, state, data,
+For Kavita, prove the exact configured stock version, EPUB route and
+`.book-content`, native login exchange, chapter navigation, reload, and
+inactivity on manga/PDF routes. New-version OIDC support requires its own
+public-browser proof; an isolated native-account fixture alone does not satisfy
+this gate. When CWA and Kavita coexist, prove their names, ports, state, data,
 backups and lifecycle operations are isolated. Community Applications
 candidates require their separate digest-pinned CWA-only checklist.
 

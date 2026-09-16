@@ -26,9 +26,10 @@ _BROWSER_CONFIG_PATH_RE = re.compile(
     r"^/tmp/nginx/browser-config(?:-[a-z][a-z0-9_-]{0,31})?\.json$"
 )
 _PLACEHOLDER_RE = re.compile(r"\$\{(?:BT_|CWA_)[A-Z0-9_]*\}")
-_READER_CONTRACTS = {
-    "cwa": "cwa-epub-v1",
-    "kavita": "kavita-0.9.0.2-epub-v1",
+_READER_CONTRACTS = {"cwa": "cwa-epub-v1", "kavita": None}
+_KAVITA_CERTIFIED_CONTRACTS = {
+    "0.9.0.2": "kavita-0.9.0.2-epub-v1",
+    "0.9.1.4": "kavita-0.9.1.4-epub-v1",
 }
 
 
@@ -211,10 +212,14 @@ def _validated_browser_config(env: Mapping[str, str]) -> dict[str, object]:
             raise ProxyConfigError("BT_READER_TYPE is unsupported")
         reader_version = _validated_version(env, "BT_READER_VERSION")
         contract = _required(env, "BT_READER_CONTRACT_VERSION")
-        if contract != _READER_CONTRACTS[reader_type]:
+        if reader_type == "kavita":
+            expected_contract = _KAVITA_CERTIFIED_CONTRACTS.get(reader_version)
+            if expected_contract is None:
+                raise ProxyConfigError("BT_READER_VERSION is not certified for Kavita")
+            if contract != expected_contract:
+                raise ProxyConfigError("BT_READER_CONTRACT_VERSION is unsupported")
+        elif contract != _READER_CONTRACTS[reader_type]:
             raise ProxyConfigError("BT_READER_CONTRACT_VERSION is unsupported")
-        if reader_type == "kavita" and reader_version != "0.9.0.2":
-            raise ProxyConfigError("BT_READER_VERSION is not certified for Kavita")
         if reader_type == "cwa" and not (
             re.fullmatch(r"4\.[0-9]+\.[0-9]+", reader_version)
             or reader_version == "3.1.4"

@@ -62,7 +62,14 @@ class ReaderSessionBrokerTests(unittest.TestCase):
 
         return get
 
-    def broker(self, *, reader_type="kavita", transport=None, cookie_name=None):
+    def broker(
+        self,
+        *,
+        reader_type="kavita",
+        reader_version="0.9.0.2",
+        transport=None,
+        cookie_name=None,
+    ):
         return ReaderSessionBroker(
             reader_type=reader_type,
             auth_url=(
@@ -70,13 +77,13 @@ class ReaderSessionBrokerTests(unittest.TestCase):
                 if reader_type == "kavita"
                 else "http://calibre-web:8083/ajax/emailstat"
             ),
-            reader_version="0.9.0.2" if reader_type == "kavita" else "4.0.6",
+            reader_version=reader_version if reader_type == "kavita" else "4.0.6",
             connector_id="01234567-89ab-4cde-8123-0123456789ab",
             public_origin="https://books.example.test",
             cookie_name=cookie_name,
             secret_key=b"s" * 32,
             http_get=transport
-            or self.transport(json.dumps({"id": 7, "kavitaVersion": "0.9.0.2"}).encode()),
+            or self.transport(json.dumps({"id": 7, "kavitaVersion": reader_version}).encode()),
             clock=self.clock,
             token_factory=lambda: next(self.tokens),
         )
@@ -135,6 +142,22 @@ class ReaderSessionBrokerTests(unittest.TestCase):
         self.assertNotIn("Cookie", kwargs["headers"])
         self.assertNotIn("refresh", repr(self.calls).lower())
         self.assertFalse(kwargs["allow_redirects"])
+
+    def test_native_kavita_0_9_1_4_bearer_exchange_uses_its_exact_contract(self):
+        broker = self.broker(reader_version="0.9.1.4")
+
+        issue = broker.exchange(
+            {
+                "Origin": "https://books.example.test",
+                "Authorization": "Bearer access-token",
+            },
+            self.binding(),
+        )
+
+        self.assertEqual(issue.token, "A" * 43)
+        self.assertEqual(
+            self.calls[0][1]["headers"]["Authorization"], "Bearer access-token"
+        )
 
     def test_oidc_chunks_are_exact_bounded_and_never_mixed_with_jwt(self):
         broker = self.broker()
@@ -357,7 +380,7 @@ class ReaderSessionBrokerTests(unittest.TestCase):
         issue = broker.exchange(
             {
                 "Origin": "https://books.example.test",
-                "Cookie": "session=one; remember_token=two",
+                "Cookie": "cf_clearance=cloudflare; remember_token=two; session=one",
             },
             self.binding(),
         )
@@ -367,13 +390,50 @@ class ReaderSessionBrokerTests(unittest.TestCase):
             self.calls[0][1]["headers"]["Cookie"],
             "session=one; remember_token=two",
         )
+        calls_before_rejections = len(self.calls)
         with self.assertRaises(BrokerRejected):
-            self.broker(reader_type="cwa", transport=self.transport(b"[]")).exchange(
+            broker.exchange(
                 {
                     "Origin": "https://books.example.test",
-                    "Cookie": "session=one; unrelated=private",
+                    "Cookie": "cf_clearance=cloudflare",
                 },
                 self.binding(),
+            )
+        with self.assertRaises(BrokerRejected):
+            broker.exchange(
+                {
+                    "Origin": "https://books.example.test",
+                    "Authorization": "Bearer leaked",
+                    "Cookie": "session=one",
+                },
+                self.binding(),
+            )
+        with self.assertRaises(BrokerRejected):
+            broker.exchange(
+                {
+                    "Origin": "https://books.example.test",
+                    "Cookie": "__Host-bt-kavita-session=foreign",
+                },
+                self.binding(),
+            )
+        self.assertEqual(len(self.calls), calls_before_rejections)
+
+        rotated = broker.exchange(
+            {
+                "Origin": "https://books.example.test",
+                "Cookie": (
+                    f"__Host-bt-session={issue.token}; "
+                    "__Host-bt-kavita-session=foreign; session=three"
+                ),
+            },
+            self.binding(),
+        )
+
+        self.assertEqual(rotated.token, "B" * 43)
+        self.assertEqual(self.calls[1][1]["headers"]["Cookie"], "session=three")
+        with self.assertRaises(BrokerRejected):
+            broker.authenticate(
+                {"Cookie": f"__Host-bt-session={issue.token}"}, self.binding()
             )
 
     def test_configuration_enforces_https_except_loopback_development(self):
@@ -415,6 +475,8 @@ class ReaderSessionEndpointTests(unittest.TestCase):
 
         self.server = server
         self.original_authenticator = server.AUTHENTICATOR
+        self.original_public_origin = server.BT_PUBLIC_ORIGIN
+        server.BT_PUBLIC_ORIGIN = "https://books.example.test"
         with server._rate_limit_lock:
             server._rate_limit_store.clear()
             server._auth_rate_limit_store.clear()
@@ -422,6 +484,7 @@ class ReaderSessionEndpointTests(unittest.TestCase):
 
     def tearDown(self):
         self.server.AUTHENTICATOR = self.original_authenticator
+        self.server.BT_PUBLIC_ORIGIN = self.original_public_origin
 
     def test_exchange_then_translation_uses_only_broker_identity(self):
         calls = []
@@ -444,6 +507,7 @@ class ReaderSessionEndpointTests(unittest.TestCase):
             mode="reader_session", reader_session_broker=broker
         )
         client = self.server.app.test_client()
+        client.environ_base["HTTP_ORIGIN"] = "https://books.example.test"
 
         exchange = client.post(
             "/session",
@@ -512,7 +576,7 @@ class ReaderSessionEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(body.status_code, 400)
-        self.assertEqual(wrong_origin.status_code, 401)
+        self.assertEqual(wrong_origin.status_code, 403)
         self.assertEqual(calls, [])
 
 

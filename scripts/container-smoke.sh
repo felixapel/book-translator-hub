@@ -170,6 +170,8 @@ docker run -d --name "$API_CONTAINER" --network "$SMOKE_NETWORK" \
     -e BT_ROLE=api \
     -e BT_AUTH_MODE=cwa_session \
     -e "BT_CWA_AUTH_URL=http://${CWA_CONTAINER}:8083/ajax/emailstat" \
+    -e BT_PUBLIC_ORIGIN=https://books.example.test:8443 \
+    -e BT_ALLOWED_ORIGINS=https://books.example.test:8443 \
     -e "BT_TRUSTED_PROXY_HOST=${PROXY_CONTAINER}" \
     -p 127.0.0.1::8390 \
     "$SMOKE_IMAGE" >/dev/null
@@ -212,6 +214,7 @@ docker run -d --name "$API_CONTAINER" --network "$SMOKE_NETWORK" \
     -e BT_READER_CONTRACT_VERSION=cwa-epub-v1 \
     -e BT_READER_CONNECTOR_ID=00000000-0000-4000-8000-000000000001 \
     -e BT_PUBLIC_ORIGIN=https://books.example.test:8443 \
+    -e BT_ALLOWED_ORIGINS=https://books.example.test:8443 \
     -e BT_SESSION_KEY_PATH=/app/data/reader_session_key \
     -e "BT_TRUSTED_PROXY_HOST=${PROXY_CONTAINER}" \
     -p 127.0.0.1::8390 \
@@ -254,14 +257,22 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' \
     -H "Cookie: ${PLUGIN_COOKIE}" -H "User-Agent: ${BROWSER_UA}" \
     "http://127.0.0.1:${PROXY_PORT}/bt-api/metrics")" = "401"
 
-# A pinned Kavita fixture proves both stock HTML proxying and native bearer
+# An exact Kavita fixture proves both stock HTML proxying and native bearer
 # exchange. Its account DTO includes unrelated auth-key data; the broker uses
-# only the bounded user id and exact v0.9.0.2 version fields.
+# only the bounded user id and selected certified version fields.
+# Preserve the older certified pair here; hub-container-smoke covers 0.9.1.4.
+KAVITA_SMOKE_VERSION="${KAVITA_SMOKE_VERSION:-0.9.0.2}"
+case "$KAVITA_SMOKE_VERSION" in
+    0.9.0.2|0.9.1.4) ;;
+    *) echo "unsupported Kavita smoke version: $KAVITA_SMOKE_VERSION" >&2; exit 64 ;;
+esac
+KAVITA_SMOKE_CONTRACT="kavita-${KAVITA_SMOKE_VERSION}-epub-v1"
 KAVITA_FIXTURE_SOURCE="$(pwd)/tests/python/test_kavita_auth_fixture.py"
 test -r "$KAVITA_FIXTURE_SOURCE"
 docker run -d --name "$KAVITA_CONTAINER" --network "$SMOKE_NETWORK" \
     "${sandbox[@]}" \
     --mount "type=bind,src=${KAVITA_FIXTURE_SOURCE},dst=/fixture/test_kavita_auth_fixture.py,readonly" \
+    -e "KAVITA_FIXTURE_VERSION=${KAVITA_SMOKE_VERSION}" \
     --entrypoint python "$SMOKE_IMAGE" \
     /fixture/test_kavita_auth_fixture.py >/dev/null
 for _ in $(seq 1 30); do
@@ -281,10 +292,11 @@ docker run -d --name "$API_CONTAINER" --network "$SMOKE_NETWORK" \
     -e BT_AUTH_MODE=reader_session \
     -e BT_READER_TYPE=kavita \
     -e "BT_READER_AUTH_URL=http://${KAVITA_CONTAINER}:5000/api/Account" \
-    -e BT_READER_VERSION=0.9.0.2 \
-    -e BT_READER_CONTRACT_VERSION=kavita-0.9.0.2-epub-v1 \
+    -e "BT_READER_VERSION=${KAVITA_SMOKE_VERSION}" \
+    -e "BT_READER_CONTRACT_VERSION=${KAVITA_SMOKE_CONTRACT}" \
     -e BT_READER_CONNECTOR_ID=00000000-0000-4000-8000-000000000002 \
     -e BT_PUBLIC_ORIGIN=https://books.example.test:8443 \
+    -e BT_ALLOWED_ORIGINS=https://books.example.test:8443 \
     -e BT_SESSION_KEY_PATH=/app/data/reader_session_key \
     -e "BT_TRUSTED_PROXY_HOST=${PROXY_CONTAINER}" \
     -p 127.0.0.1::8390 \
@@ -296,8 +308,8 @@ docker run -d --name "$PROXY_CONTAINER" --network "$SMOKE_NETWORK" \
     -e "BT_READER_UPSTREAM=http://${KAVITA_CONTAINER}:5000" \
     -e "BT_API_UPSTREAM=http://${API_CONTAINER}:8390" \
     -e BT_PUBLIC_ORIGIN=https://books.example.test:8443 \
-    -e BT_READER_VERSION=0.9.0.2 \
-    -e BT_READER_CONTRACT_VERSION=kavita-0.9.0.2-epub-v1 \
+    -e "BT_READER_VERSION=${KAVITA_SMOKE_VERSION}" \
+    -e "BT_READER_CONTRACT_VERSION=${KAVITA_SMOKE_CONTRACT}" \
     -e BT_BROWSER_AUTH_MODE=reader_session \
     -e BT_BROWSER_CREDENTIALS=same-origin \
     -p 127.0.0.1::8080 \
@@ -465,6 +477,8 @@ docker run -d --name "$API_CONTAINER" --network "$SMOKE_NETWORK" \
     --mount "type=volume,source=${SMOKE_VOLUME},target=/app/data" \
     -e BT_ROLE=api \
     -e BT_AUTH_MODE=forwarded \
+    -e BT_PUBLIC_ORIGIN=https://books.example.test \
+    -e BT_ALLOWED_ORIGINS=https://books.example.test \
     -e "BT_IDENTITY_TRUSTED_PROXIES=${EDGE_IP}/32" \
     -e "BT_TRUSTED_PROXIES=${EDGE_IP}/32" \
     -e BT_FORWARDED_SUBJECT_HEADER=X-authentik-uid \

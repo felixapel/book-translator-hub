@@ -171,6 +171,13 @@ class ContainerContractTests(unittest.TestCase):
         self.assertIn("BT_TRUSTED_PROXIES=172.30.39.3/32", compose)
         self.assertIn("- subnet: 172.30.39.0/24", compose)
         self.assertIn("BT_AUTH_MODE=cwa_session", compose)
+        api_environment = compose.split("  book-translator-api:", 1)[1].split(
+            "  book-translator-proxy:", 1
+        )[0]
+        self.assertIn(
+            "BT_PUBLIC_ORIGIN=${BT_PUBLIC_ORIGIN:?Set BT_PUBLIC_ORIGIN to the exact browser-facing origin}",
+            api_environment,
+        )
         self.assertIn("BT_CWA_AUTH_URL=http://calibre-web:8083/ajax/emailstat", compose)
         self.assertIn("BT_ALLOW_PRIVATE_LAN=false", compose)
         api_service = compose.split("  book-translator-api:", 1)[1].split(
@@ -227,7 +234,9 @@ class ContainerContractTests(unittest.TestCase):
             "docker image inspect \"$SMOKE_IMAGE\" --format '{{.Config.User}}'",
             "BT_AUTH_MODE=reader_session",
             "BT_READER_TYPE=kavita",
-            "BT_READER_VERSION=0.9.0.2",
+            'KAVITA_SMOKE_VERSION="${KAVITA_SMOKE_VERSION:-0.9.0.2}"',
+            "0.9.0.2|0.9.1.4",
+            'KAVITA_SMOKE_CONTRACT="kavita-${KAVITA_SMOKE_VERSION}-epub-v1"',
             "test_kavita_auth_fixture.py",
             "/bt-api/session",
         ):
@@ -255,7 +264,9 @@ class ContainerContractTests(unittest.TestCase):
         fixture = ROOT / "tests" / "python" / "test_kavita_auth_fixture.py"
         source = fixture.read_text(encoding="utf-8")
         compile(source, str(fixture), "exec")
-        self.assertIn('"kavitaVersion": "0.9.0.2"', source)
+        self.assertIn('KAVITA_FIXTURE_VERSION', source)
+        self.assertIn('{"0.9.0.2", "0.9.1.4"}', source)
+        self.assertIn('"kavitaVersion": KAVITA_VERSION', source)
         self.assertIn('class="book-content"', source.replace('\\"', '"'))
 
     def test_ca_profile_certifies_the_combined_role_without_publishing_api(self):
@@ -295,7 +306,7 @@ class ContainerContractTests(unittest.TestCase):
         for token in (
             "ARG BUILD_VERSION=dev",
             "ARG BUILD_REVISION=unknown",
-            'org.opencontainers.image.source="https://github.com/felixapel/CWA-eBook-Translate-Plugin"',
+            'org.opencontainers.image.source="https://github.com/felixapel/book-translator-hub"',
             'org.opencontainers.image.licenses="GPL-3.0-only"',
             'org.opencontainers.image.version="$BUILD_VERSION"',
             'org.opencontainers.image.revision="$BUILD_REVISION"',

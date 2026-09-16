@@ -193,7 +193,7 @@ def run():
     check("auth admission: without BT_TRUST_PROXY, X-Forwarded-For is ignored",
           auth_keys and auth_keys[0] != "1.2.3.4")
     check("API limit: successful work uses the authenticated subject",
-          api_keys == ["authenticated:legacy-anonymous"])
+          api_keys == [f"authenticated:legacy-anonymous:{auth_keys[0]}"])
     server._rate_limit_store.clear()
     server._auth_rate_limit_store.clear()
 
@@ -223,6 +223,7 @@ def run():
     original_nets = list(server._TRUSTED_PROXY_NETS)
     original_limit = server.RATE_LIMIT_MAX
     original_authenticator = server.AUTHENTICATOR
+    original_public_origin = server.BT_PUBLIC_ORIGIN
     try:
         # Werkzeug's test client connects from 127.0.0.1. Allowlist it.
         server.BT_TRUSTED_PROXIES = {"127.0.0.1/32"}
@@ -277,6 +278,7 @@ def run():
             forwarded_subject_header="X-BT-Subject",
             forwarded_roles_header="",
         )
+        server.BT_PUBLIC_ORIGIN = "https://books.example.test"
         payload = {
             "text": "proxy bucket probe",
             "source_lang": "English",
@@ -284,13 +286,16 @@ def run():
         }
         a_first = client.post("/translate", json=payload,
                               headers={"X-Forwarded-For": "192.0.2.10",
-                                       "X-BT-Subject": "subject-a"})
+                                       "X-BT-Subject": "subject-a",
+                                       "Origin": server.BT_PUBLIC_ORIGIN})
         a_second = client.post("/translate", json=payload,
                                headers={"X-Forwarded-For": "192.0.2.10",
-                                        "X-BT-Subject": "subject-a"})
+                                        "X-BT-Subject": "subject-a",
+                                        "Origin": server.BT_PUBLIC_ORIGIN})
         b_first = client.post("/translate", json=payload,
                               headers={"X-Forwarded-For": "192.0.2.11",
-                                       "X-BT-Subject": "subject-b"})
+                                       "X-BT-Subject": "subject-b",
+                                       "Origin": server.BT_PUBLIC_ORIGIN})
         check("authenticated subject A does not consume subject B's API budget",
               a_first.status_code != 429
               and a_second.status_code == 429
@@ -302,6 +307,7 @@ def run():
         server._TRUSTED_PROXY_NETS = original_nets
         server.RATE_LIMIT_MAX = original_limit
         server.AUTHENTICATOR = original_authenticator
+        server.BT_PUBLIC_ORIGIN = original_public_origin
         server._rate_limit_store.clear()
         server._auth_rate_limit_store.clear()
 

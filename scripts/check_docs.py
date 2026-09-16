@@ -197,17 +197,13 @@ def collect_errors(repository: Path = REPOSITORY) -> list[str]:
 
     version = (repository / "VERSION").read_text(encoding="utf-8").strip()
     readme = (repository / "README.md").read_text(encoding="utf-8")
-    expected_checkout = f"git switch --detach v{version}"
-    if "-" in version:
-        candidate_notice = f"Version `{version}` is still an unreleased candidate"
-        if candidate_notice not in readme:
-            errors.append(
-                f"README must identify the current unreleased candidate: {version}"
-            )
-        if expected_checkout in readme:
-            errors.append("README must not claim a tag for an unreleased candidate")
-    elif expected_checkout not in readme:
-        errors.append(f"README install must select the current release: {expected_checkout}")
+    published_checkout = "git switch --detach vX.Y.Z"
+    if published_checkout not in readme:
+        errors.append(
+            "README install must direct operators to select a published immutable tag"
+        )
+    if f"git switch --detach v{version}" in readme:
+        errors.append("README must not infer that the source version already has a tag")
     if len(readme.splitlines()) > 220:
         errors.append("README exceeds the 220-line public-entrypoint budget")
 

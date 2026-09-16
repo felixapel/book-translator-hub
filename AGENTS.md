@@ -2,7 +2,7 @@
 
 ## Scope and authority
 
-- Gitea `felix/CWA-translate-plugin` is authoritative for branches, pull
+- Gitea `felix/book-translator-hub` is authoritative for branches, pull
   requests, tags and releases. GitHub is a public mirror and GHCR publisher.
 - Never push directly to protected `main`, rewrite a published `v*` tag or
   manually rerun Actions to bypass a failed gate.

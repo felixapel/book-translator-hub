@@ -11,8 +11,12 @@ CWA_CONTAINER="${SMOKE_PREFIX}-cwa"
 KAVITA_CONTAINER="${SMOKE_PREFIX}-kavita"
 SMOKE_NETWORK="${SMOKE_PREFIX}-net"
 DATA_DIR=""
+SESSION_HEADERS=""
 
 cleanup() {
+    if [ -n "$SESSION_HEADERS" ]; then
+        rm -f -- "$SESSION_HEADERS"
+    fi
     docker rm -f -v "$HUB_CONTAINER" "$CWA_CONTAINER" "$KAVITA_CONTAINER" \
         >/dev/null 2>&1 || true
     docker network rm "$SMOKE_NETWORK" >/dev/null 2>&1 || true
@@ -54,6 +58,7 @@ docker run -d --name "$CWA_CONTAINER" --network "$SMOKE_NETWORK" \
 docker run -d --name "$KAVITA_CONTAINER" --network "$SMOKE_NETWORK" \
     "${sandbox[@]}" \
     --mount "type=bind,src=$(pwd)/tests/python/test_kavita_auth_fixture.py,dst=/fixture.py,readonly" \
+    -e KAVITA_FIXTURE_VERSION=0.9.1.4 \
     --entrypoint python "$SMOKE_IMAGE" /fixture.py >/dev/null
 
 docker run -d --name "$HUB_CONTAINER" --network "$SMOKE_NETWORK" \
@@ -70,7 +75,7 @@ docker run -d --name "$HUB_CONTAINER" --network "$SMOKE_NETWORK" \
     -e BT_ENABLE_KAVITA=true \
     -e BT_KAVITA_PUBLIC_ORIGIN=https://kavita.example.test \
     -e "BT_KAVITA_READER_UPSTREAM=http://${KAVITA_CONTAINER}:5000" \
-    -e BT_KAVITA_READER_VERSION=0.9.0.2 \
+    -e BT_KAVITA_READER_VERSION=0.9.1.4 \
     -e BT_KAVITA_AUTH_PROFILE=reader-session \
     -e BT_KAVITA_READER_CONNECTOR_ID=11234567-89ab-4cde-8123-0123456789ab \
     -e BT_KAVITA_PUBLISHED_PORT=8386 \
@@ -96,6 +101,19 @@ curl -sf "http://127.0.0.1:${CWA_PORT}/bt-api/ping" | grep -q '"status":"ok"'
 curl -sf "http://127.0.0.1:${KAVITA_PORT}/bt-api/ping" | grep -q '"status":"ok"'
 curl -sf "http://127.0.0.1:${KAVITA_PORT}/library/1/series/2/book/3" \
     | grep -q '/bt-static/loader.js'
+
+SESSION_HEADERS="$(mktemp "${TMPDIR:-/tmp}/bt-hub-session.XXXXXX")"
+curl -sf -D "$SESSION_HEADERS" -o /dev/null -X POST \
+    -H 'Authorization: Bearer container-smoke-kavita-access' \
+    -H 'User-Agent: Hub-Smoke-Browser/1.0' \
+    -H 'Origin: https://kavita.example.test' \
+    "http://127.0.0.1:${KAVITA_PORT}/bt-api/session"
+KAVITA_PLUGIN_COOKIE="$(awk 'BEGIN{IGNORECASE=1} /^set-cookie:/ {sub(/^[^:]*:[[:space:]]*/, ""); split($0, parts, ";"); if (parts[1] ~ /^__Host-bt-kavita-session=/) print parts[1]}' "$SESSION_HEADERS" | tail -n 1 | tr -d '\r')"
+[[ "$KAVITA_PLUGIN_COOKIE" =~ ^__Host-bt-kavita-session=[A-Za-z0-9_-]{32,128}$ ]]
+curl -sf -H "Cookie: ${KAVITA_PLUGIN_COOKIE}" \
+    -H 'User-Agent: Hub-Smoke-Browser/1.0' \
+    "http://127.0.0.1:${KAVITA_PORT}/bt-api/metrics" \
+    | grep -q '"total_requests"'
 
 docker exec "$HUB_CONTAINER" test -f /app/data/cwa/translations.db
 docker exec "$HUB_CONTAINER" test -f /app/data/kavita/translations.db

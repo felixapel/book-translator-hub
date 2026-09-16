@@ -5,8 +5,8 @@ WORKDIR /app
 ARG BUILD_VERSION=dev
 ARG BUILD_REVISION=unknown
 LABEL org.opencontainers.image.title="Book Translator Hub" \
-      org.opencontainers.image.description="Universal bilingual LLM translation overlay and engine for Calibre-Web and Kavita" \
-      org.opencontainers.image.source="https://github.com/felixapel/CWA-eBook-Translate-Plugin" \
+      org.opencontainers.image.description="Bilingual LLM translation overlay for stock Calibre-Web-Automated and versioned Kavita EPUB readers" \
+      org.opencontainers.image.source="https://github.com/felixapel/book-translator-hub" \
       org.opencontainers.image.url="https://github.com/felixapel/book-translator-hub" \
       org.opencontainers.image.documentation="https://github.com/felixapel/book-translator-hub#readme" \
       org.opencontainers.image.licenses="GPL-3.0-only" \
@@ -16,7 +16,10 @@ LABEL org.opencontainers.image.title="Book Translator Hub" \
 # nginx powers the proxy role. Direct and transitive versions are pinned so an
 # Alpine repository update cannot silently change the artifact.
 RUN apk add --no-cache \
+    libcrypto3=3.5.8-r0 \
     libgomp=15.2.0-r5 \
+    libssl3=3.5.8-r0 \
+    libuuid=2.42.3-r1 \
     libxml2=2.13.9-r2 \
     nginx=1.30.4-r1 \
     pcre2=10.48-r0

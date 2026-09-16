@@ -1,8 +1,10 @@
-"""Minimal pinned Kavita v0.9.0.2 boundary for container smoke tests.
+"""Minimal exact Kavita account boundary for container smoke tests.
 
 This is not a Kavita substitute. It exposes only the exact authenticated
 account response and stock EPUB DOM/route shape consumed by the connector.
 """
+
+import os
 
 from flask import Flask, jsonify, request
 
@@ -11,6 +13,9 @@ app = Flask(__name__)
 
 NATIVE_TOKEN = "container-smoke-kavita-access"
 OIDC_COOKIE = "container-smoke-kavita-oidc"
+KAVITA_VERSION = os.environ.get("KAVITA_FIXTURE_VERSION", "0.9.0.2")
+if KAVITA_VERSION not in {"0.9.0.2", "0.9.1.4"}:
+    raise RuntimeError("KAVITA_FIXTURE_VERSION is not a certified fixture contract")
 
 
 @app.get("/api/Account")
@@ -25,7 +30,7 @@ def account():
         {
             "id": 73,
             "username": "fixture-user",
-            "kavitaVersion": "0.9.0.2",
+            "kavitaVersion": KAVITA_VERSION,
             "authKeys": [{"name": "must-not-leave-fixture", "key": "secret"}],
         }
     )
