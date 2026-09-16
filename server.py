@@ -420,13 +420,24 @@ def _validate_cors_origin(origin: str) -> str:
     return origin
 
 
-ALLOWED_ORIGINS = {
-    _validate_cors_origin(o.strip())
+_raw_origins = [
+    o.strip()
     for o in os.environ.get(
         "BT_ALLOWED_ORIGINS", "http://localhost:8083,http://localhost:8383"
     ).split(",")
     if o.strip()
-}
+]
+_cors_allow_wildcard = "*" in _raw_origins
+ALLOWED_ORIGINS = set()
+for o in _raw_origins:
+    if o == "*":
+        continue
+    try:
+        ALLOWED_ORIGINS.add(_validate_cors_origin(o))
+    except ValueError as exc:
+        log.warning(
+            "Ignoring invalid CORS origin in BT_ALLOWED_ORIGINS: %r (%s)", o, exc
+        )
 
 # Auto-register reader and public origins into CORS whitelist
 def _extract_origin_candidate(url_candidate: str) -> str | None:
@@ -479,6 +490,8 @@ def _is_origin_allowed(origin: str | None) -> str | None:
     """Return the origin if it's allowed, else None."""
     if not origin:
         return None
+    if _cors_allow_wildcard and AUTHENTICATOR.mode not in {"cwa_session", "reader_session"}:
+        return origin
     if origin in ALLOWED_ORIGINS:
         return origin
     # Credentialed CWA-session requests may never combine cookies with a

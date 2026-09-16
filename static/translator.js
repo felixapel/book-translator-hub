@@ -5,7 +5,7 @@
 (function () {
     'use strict';
     // ── Version & Telemetry ──────────────────────────────────────────
-    const BT_UI_VERSION = '2.3.3';
+    const BT_UI_VERSION = '2.4.0';
     console.log(`[BookTranslator] loaded version ${BT_UI_VERSION}`);
     const cfg = (typeof window !== 'undefined' && window.BOOK_TRANSLATOR) || {};
     function boundedInteger(value, minimum, maximum, fallback) {
@@ -1362,9 +1362,9 @@
 
     function getReaderRoot() {
         if (READER_TYPE === 'kavita') {
-            return document.querySelector('.book-content');
+            return (typeof document !== 'undefined' && document) ? document.querySelector('.book-content') : null;
         }
-        return getReaderDoc() || document;
+        return getReaderDoc() || (typeof document !== 'undefined' ? document : null);
     }
 
     const HEADING_CLASS_RE = /title|subtitle|chapter|heading|epigraph/i;
