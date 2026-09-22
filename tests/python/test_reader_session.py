@@ -260,6 +260,27 @@ class ReaderSessionBrokerTests(unittest.TestCase):
                 self.broker().exchange(headers, self.binding())
         self.assertEqual(len(self.calls), calls_before_rejections)
 
+    def test_cwa_exchange_handles_ambient_cookies_with_trailing_semicolons_and_whitespace(self):
+        cwa_broker = self.broker(
+            reader_type="cwa",
+            transport=self.transport(b'[{"status": 1}]'),
+        )
+        cwa_broker.exchange(
+            {
+                "Origin": "https://books.example.test",
+                "Cookie": (
+                    "ambient_flag; empty=; theme=dark; "
+                    "session=\"session-secret\"; "
+                    "remember_token=remember; "
+                ),
+            },
+            self.binding(),
+        )
+        self.assertEqual(
+            self.calls[-1][1]["headers"]["Cookie"],
+            "session=session-secret; remember_token=remember",
+        )
+
     def test_normal_requests_accept_only_bound_short_lived_plugin_cookie(self):
         broker = self.broker()
         issue = broker.exchange(
@@ -462,11 +483,12 @@ class ReaderSessionBrokerTests(unittest.TestCase):
 
             self.assertEqual(first, second)
             self.assertEqual(len(first), 32)
-            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-            path.chmod(0o644)
-            with self.assertRaises(BrokerConfigError):
-                load_or_create_session_key(path)
-            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                path.chmod(0o644)
+                with self.assertRaises(BrokerConfigError):
+                    load_or_create_session_key(path)
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
 
 
 class ReaderSessionEndpointTests(unittest.TestCase):

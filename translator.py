@@ -1779,6 +1779,8 @@ def _call_provider_stream(
             stream=True,
             budget=budget,
         )
+        if hasattr(resp, "raise_for_status"):
+            resp.raise_for_status()
         for line in resp.iter_lines():
             budget.ensure_active()
             if not line:

@@ -2552,8 +2552,10 @@ def cache_cleanup():
 # ── Cleanup-token auto-generation ──────────────────────────────────────────
 # Persistent path inside the data dir, alongside the sqlite database. The
 # file is intentionally named without a leading dot so `ls` shows it by
-# default — operators need to be able to see it to understand the auth model.
-import fcntl as _fcntl  # Linux/Alpine process lock for the persisted secret
+try:
+    import fcntl as _fcntl  # Linux/Alpine process lock for the persisted secret
+except ImportError:
+    _fcntl = None
 import secrets as _secrets  # local: small surface
 import stat as _stat
 import tempfile as _tempfile
@@ -2582,7 +2584,8 @@ def _read_cleanup_token_file() -> str:
             raise OSError("cleanup token path is not a regular file")
         with os.fdopen(fd, "r", encoding="utf-8") as token_file:
             fd = -1  # fdopen owns and closes it from this point.
-            os.fchmod(token_file.fileno(), _CLEANUP_FILE_MODE)
+            if hasattr(os, "fchmod") and os.name != "nt":
+                os.fchmod(token_file.fileno(), _CLEANUP_FILE_MODE)
             # A generated token is ~43 bytes. Refuse an unexpectedly large
             # file rather than letting a corrupt volume consume unbounded RAM.
             value = token_file.read(4097)
@@ -2608,8 +2611,10 @@ def _persist_cleanup_token() -> tuple[str, bool]:
         raise OSError("cleanup token lock path is not a regular file")
 
     with os.fdopen(lock_fd, "r+", encoding="utf-8") as lock_file:
-        os.fchmod(lock_file.fileno(), _CLEANUP_FILE_MODE)
-        _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_EX)
+        if hasattr(os, "fchmod") and os.name != "nt":
+            os.fchmod(lock_file.fileno(), _CLEANUP_FILE_MODE)
+        if _fcntl is not None:
+            _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_EX)
 
         existing = _read_cleanup_token_file()
         if existing:
@@ -2621,7 +2626,8 @@ def _persist_cleanup_token() -> tuple[str, bool]:
             dir=_CLEANUP_TOKEN_PATH.parent,
         )
         try:
-            os.fchmod(temp_fd, _CLEANUP_FILE_MODE)
+            if hasattr(os, "fchmod") and os.name != "nt":
+                os.fchmod(temp_fd, _CLEANUP_FILE_MODE)
             with os.fdopen(temp_fd, "w", encoding="utf-8") as temp_file:
                 temp_fd = -1  # fdopen owns and closes it from this point.
                 temp_file.write(token)
@@ -2632,14 +2638,18 @@ def _persist_cleanup_token() -> tuple[str, bool]:
 
             # Persist the rename itself before releasing the inter-process
             # lock, so a host crash cannot expose a partially-created secret.
-            directory_fd = os.open(
-                _CLEANUP_TOKEN_PATH.parent,
-                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-            )
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            if hasattr(os, "O_DIRECTORY") and os.name != "nt":
+                try:
+                    directory_fd = os.open(
+                        _CLEANUP_TOKEN_PATH.parent,
+                        os.O_RDONLY | os.O_DIRECTORY,
+                    )
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+                except OSError:
+                    pass
         finally:
             if temp_fd >= 0:
                 os.close(temp_fd)
