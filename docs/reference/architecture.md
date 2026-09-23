@@ -123,10 +123,18 @@ cannot detach an active API container from its bind source.
   parsed from book metadata and DOM/HTML attributes with user override capability in Settings. Interactive
   target language dropdown with directional arrow (`→`) rendered directly on the floating bar,
   bi-directionally synchronized with the Settings dialog.
-- **Translation Management**: Prioritizes visible paragraphs, streams eligible
-  first-paragraph output, and schedules bounded forward lookahead. Provider,
-  model, network and cache state determine observed latency. Only explicit
-  pre-provider admission `429`s are replayed automatically.
+- **Translation Management**: Prioritizes paragraphs intersecting the reader's
+  clipped viewport, sends bounded batches, and renders completed paragraph
+  translations. It schedules bounded forward lookahead only when enabled.
+  Provider, model, network and cache state determine observed latency. Only
+  explicit pre-provider admission `429`s are replayed automatically.
+- **Reading stability**: CWA projects individual text fragments into the outer
+  clipped viewport, preserves a visible source paragraph during DOM updates,
+  and distinguishes its own scroll correction from user navigation. Duplicate
+  rendition events do not reset active work. Source mutations invalidate
+  discovery, and responses apply only to connected, unchanged source nodes.
+  Provider-policy bootstrap has a bounded deadline and fails closed before
+  any book text can be submitted.
 - **Client Cache**: Uses in-memory state and `localStorage` language, style, and
   toolbar-position preferences. Translation mode resets to OFF on every book
   entry and page reload, including when older mode preferences remain in

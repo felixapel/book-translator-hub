@@ -1521,6 +1521,11 @@ async function assertCwaIframeLoadStaysDisconnectedWhenOff() {
     const iframe = cwaDom.window.document.querySelector('iframe');
     iframe.contentDocument.body.innerHTML = '<p>Readable EPUB chapter text.</p>';
     iframe.contentDocument.documentElement.lang = 'en';
+    let renderedHook = null;
+    cwaDom.window.reader = { rendition: {
+        currentLocation: () => ({ start: { cfi: 'epubcfi(/6/2!/4/2)' } }),
+        on: (name, callback) => { if (name === 'rendered') renderedHook = callback; }
+    } };
     const NativeMutationObserver = cwaDom.window.MutationObserver;
     let activeReaderObservers = 0;
     cwaDom.window.MutationObserver = class extends NativeMutationObserver {
@@ -1565,6 +1570,11 @@ async function assertCwaIframeLoadStaysDisconnectedWhenOff() {
     assert.strictEqual(bar.dataset.mode, 'off');
     assert.strictEqual(activeReaderObservers, 0,
         'CWA must not observe EPUB content before manual activation');
+    iframe.contentDocument.documentElement.innerHTML = '<head></head><body><p>OFF replacement must stay idle.</p></body>';
+    renderedHook();
+    await wait(20);
+    assert.strictEqual(activeReaderObservers, 0,
+        'A rendered EPUB replacement while OFF must not attach a content observer');
     iframe.contentDocument.dispatchEvent(new cwaDom.window.KeyboardEvent('keydown', {
         key: 't', altKey: true, bubbles: true, cancelable: true
     }));
@@ -1581,6 +1591,204 @@ async function assertCwaIframeLoadStaysDisconnectedWhenOff() {
         'An iframe load after CWA is OFF must not reattach its content observer');
     await wait(30);
     cwaDom.window.close();
+}
+
+async function assertCwaMutationRefreshesTextWithoutReplayingPluginWrites() {
+    const mutationDom = new JSDOM('<!doctype html><body><div id="viewer"><iframe></iframe></div></body>', {
+        url: 'https://books.example.test/read/42/epub', runScripts: 'dangerously'
+    });
+    mutationDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api', authMode: 'cwa_session', credentials: 'same-origin', readerType: 'cwa'
+    };
+    mutationDom.window.localStorage.setItem('bt_prefetch', '0');
+    mutationDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const frameDoc = mutationDom.window.document.querySelector('iframe').contentDocument;
+    frameDoc.documentElement.lang = 'en';
+    const calls = [];
+    let resolveFirst;
+    mutationDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) {
+            return { ok: true, status: 200, json: async () => ({
+                primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef'
+            }), headers: { get: () => null } };
+        }
+        const payload = JSON.parse(options.body);
+        calls.push(payload);
+        if (calls.length === 1) return new Promise(resolve => { resolveFirst = resolve; });
+        return { ok: true, status: 200, json: async () => ({
+            translations: payload.paragraphs.map(text => `new: ${text}`)
+        }), headers: { get: () => null } };
+    };
+    const script = mutationDom.window.document.createElement('script');
+    script.textContent = code;
+    mutationDom.window.document.body.appendChild(script);
+    await activateReader(mutationDom.window);
+    // First discover a one-character node (not a translation candidate), then
+    // turn it into prose through characterData only. This used to retain the
+    // cached empty candidate list indefinitely.
+    frameDoc.body.innerHTML = '<p id="source">x</p>';
+    const paragraph = frameDoc.getElementById('source');
+    paragraph.getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
+    await wait(320);
+    paragraph.firstChild.data = 'before edit';
+    let deadline = Date.now() + 1500;
+    while (calls.length < 1 && Date.now() < deadline) await wait(10);
+    assert.strictEqual(calls[0].paragraphs[0], 'before edit',
+        'CWA must rediscover a paragraph after a character-data-only source edit');
+    paragraph.firstChild.data = 'after edit';
+    await wait(320);
+    resolveFirst({ ok: true, status: 200, json: async () => ({ translations: ['old response'] }), headers: { get: () => null } });
+    deadline = Date.now() + 1500;
+    while (calls.length < 2 && Date.now() < deadline) await wait(10);
+    assert.strictEqual(calls[1].paragraphs[0], 'after edit',
+        'A character-data source edit must invalidate its cached paragraph text');
+    deadline = Date.now() + 1500;
+    while (!paragraph.querySelector('.bt-translation') && Date.now() < deadline) await wait(10);
+    assert.strictEqual(paragraph.querySelector('.bt-translation').textContent, 'new: after edit',
+        'A stale response must never paint over revised source text');
+    await wait(350);
+    assert.strictEqual(calls.length, 2,
+        'Plugin-owned translation rendering must not trigger another source scan');
+    mutationDom.window.close();
+}
+
+async function assertProviderPolicyDeadlineFailsClosed() {
+    const policyDom = new JSDOM('<!doctype html><body><div class="book-content" data-bt-book-language="en"><p>policy timeout text</p></div></body>', {
+        url: 'https://kavita.example.test/library/7/series/42/book/99', runScripts: 'dangerously'
+    });
+    policyDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api', authMode: 'reader_session', credentials: 'same-origin',
+        readerType: 'kavita', readerVersion: '0.9.0.2', readerContractVersion: 'kavita-0.9.0.2-epub-v1',
+        providerPolicyTimeoutMs: 100
+    };
+    policyDom.window.localStorage.setItem('bt_prefetch', '0');
+    policyDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    policyDom.window.document.documentElement.lang = 'en';
+    policyDom.window.document.querySelector('p').getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
+    let policyCalls = 0;
+    let translations = 0;
+    policyDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) {
+            policyCalls++;
+            if (policyCalls === 1) return new Promise(() => {});
+            return { ok: true, status: 200, json: async () => ({
+                primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef'
+            }), headers: { get: () => null } };
+        }
+        translations++;
+        const payload = JSON.parse(options.body);
+        return { ok: true, status: 200, json: async () => ({ translations: payload.paragraphs.map(() => 'translated') }), headers: { get: () => null } };
+    };
+    const script = policyDom.window.document.createElement('script');
+    script.textContent = code;
+    policyDom.window.document.body.appendChild(script);
+    await activateReader(policyDom.window);
+    await wait(180);
+    assert.strictEqual(translations, 0, 'A hung provider-policy bootstrap must fail closed before /translate');
+    policyDom.window.document.getElementById('bt-status').click();
+    let deadline = Date.now() + 1200;
+    while (translations < 1 && Date.now() < deadline) await wait(10);
+    assert.strictEqual(translations, 1, 'Explicit reactivation may recover after a bounded policy failure');
+    policyDom.window.close();
+}
+
+async function assertRenderedSameLocationReconcilesReplacementOnce() {
+    const hookDom = new JSDOM('<!doctype html><body><div id="viewer"><iframe></iframe></div></body>', {
+        url: 'https://books.example.test/read/42/epub', runScripts: 'dangerously'
+    });
+    hookDom.window.BOOK_TRANSLATOR = { apiUrl: '/bt-api', authMode: 'cwa_session', readerType: 'cwa' };
+    hookDom.window.localStorage.setItem('bt_prefetch', '0');
+    hookDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const frame = hookDom.window.document.querySelector('iframe');
+    const chapter = frame.contentDocument;
+    chapter.documentElement.lang = 'en';
+    chapter.body.innerHTML = '<p>same location original</p>';
+    chapter.querySelector('p').getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
+    const hooks = {};
+    hookDom.window.reader = { rendition: {
+        currentLocation: () => ({ start: { cfi: 'epubcfi(/6/2!/4/2)' } }),
+        on: (name, callback) => { hooks[name] = callback; }
+    } };
+    const calls = [];
+    hookDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) return { ok: true, status: 200, json: async () => ({
+            primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef'
+        }), headers: { get: () => null } };
+        const payload = JSON.parse(options.body);
+        calls.push(payload);
+        return { ok: true, status: 200, json: async () => ({ translations: payload.paragraphs.map(() => 'translated') }), headers: { get: () => null } };
+    };
+    const script = hookDom.window.document.createElement('script');
+    script.textContent = code;
+    hookDom.window.document.body.appendChild(script);
+    await activateReader(hookDom.window);
+    let deadline = Date.now() + 1000;
+    while (calls.length < 1 && Date.now() < deadline) await wait(10);
+    hooks.relocated({ start: { cfi: 'epubcfi(/6/2!/4/2)' } });
+    await wait(80);
+    assert.strictEqual(calls.length, 1, 'Duplicate relocated events must not replay admitted work');
+    chapter.documentElement.innerHTML = '<head></head><body><p>same location replacement</p></body>';
+    chapter.querySelector('p').getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
+    hooks.rendered();
+    deadline = Date.now() + 1000;
+    while (!calls.some(payload => payload.paragraphs.includes('same location replacement')) && Date.now() < deadline) await wait(10);
+    assert(calls.some(payload => payload.paragraphs.includes('same location replacement')),
+        'A rendered-only replacement at the same CFI must reconcile without waiting forever for relocated');
+    hookDom.window.close();
+}
+
+async function assertPluginChildrenDoNotHideTitleOrHeadingAnchor() {
+    const titleDom = new JSDOM('<!doctype html><body><div id="viewer"><iframe></iframe></div></body>', {
+        url: 'https://books.example.test/read/42/epub', runScripts: 'dangerously'
+    });
+    titleDom.window.BOOK_TRANSLATOR = { apiUrl: '/bt-api', authMode: 'cwa_session', readerType: 'cwa' };
+    titleDom.window.localStorage.setItem('bt_prefetch', '0');
+    titleDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const chapter = titleDom.window.document.querySelector('iframe').contentDocument;
+    chapter.documentElement.lang = 'en';
+    chapter.body.innerHTML = '<div class="title" id="title">Heading text</div><a id="heading-link" href="#next">Heading anchor</a>';
+    chapter.querySelectorAll('#title,#heading-link').forEach(node => {
+        node.getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
+    });
+    let cfi = 'epubcfi(/6/2!/4/2)';
+    const hooks = {};
+    titleDom.window.reader = { rendition: {
+        currentLocation: () => ({ start: { cfi, href: '/chapter.xhtml' } }), on: (name, callback) => { hooks[name] = callback; }
+    } };
+    const payloads = [];
+    titleDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) return { ok: true, status: 200, json: async () => ({
+            primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef'
+        }), headers: { get: () => null } };
+        const payload = JSON.parse(options.body);
+        payloads.push(payload);
+        return { ok: true, status: 200, json: async () => ({
+            translations: payload.paragraphs.map(text => `ES: ${text}`)
+        }), headers: { get: () => null } };
+    };
+    const script = titleDom.window.document.createElement('script');
+    script.textContent = code;
+    titleDom.window.document.body.appendChild(script);
+    await activateReader(titleDom.window);
+    let deadline = Date.now() + 1500;
+    while (payloads.length < 2 && Date.now() < deadline) await wait(10);
+    assert.strictEqual(payloads.flatMap(payload => payload.paragraphs).length, 2);
+    assert(chapter.querySelector('#title > .bt-translation'));
+    assert(chapter.querySelector('#heading-link > .bt-translation'));
+    cfi = 'epubcfi(/6/2!/4/4)';
+    hooks.relocated({ start: { cfi, href: '/chapter.xhtml' } });
+    await wait(80);
+    await activateReader(titleDom.window, 'translated');
+    assert.strictEqual(chapter.querySelector('#title').textContent, 'ES: Heading text');
+    assert.strictEqual(chapter.querySelector('#heading-link').textContent, 'ES: Heading anchor');
+    assert.strictEqual(chapter.querySelector('#heading-link').getAttribute('href'), '#next');
+    assert.strictEqual(payloads.flatMap(payload => payload.paragraphs).length, 2,
+        'Cached title and anchor renders must not create extra provider work after relocated');
+    await activateReader(titleDom.window, 'off');
+    assert.strictEqual(chapter.querySelector('#title').textContent, 'Heading text');
+    assert.strictEqual(chapter.querySelector('#heading-link').textContent, 'Heading anchor');
+    assert.strictEqual(chapter.querySelector('#heading-link').getAttribute('href'), '#next');
+    titleDom.window.close();
 }
 
 async function runTest() {
@@ -1813,6 +2021,10 @@ async function runTest() {
     await assertSpaNavigationWaitsForDestinationContent();
     await assertEmptyPreviousBookCanActivateDestination();
     await assertCwaIframeLoadStaysDisconnectedWhenOff();
+    await assertCwaMutationRefreshesTextWithoutReplayingPluginWrites();
+    await assertProviderPolicyDeadlineFailsClosed();
+    await assertRenderedSameLocationReconcilesReplacementOnce();
+    await assertPluginChildrenDoNotHideTitleOrHeadingAnchor();
 
     console.log("All assertions passed.");
     process.exit(0);
