@@ -174,9 +174,9 @@ def collect_errors(repository: Path = REPOSITORY) -> list[str]:
         adr = decisions / adr_name
         status, date = _adr_metadata(adr)
         if status not in VALID_ADR_STATUSES:
-            errors.append(f"{adr.relative_to(repository)} has invalid or missing Status")
+            errors.append(f"{adr.relative_to(repository).as_posix()} has invalid or missing Status")
         if date is None:
-            errors.append(f"{adr.relative_to(repository)} has invalid or missing Date")
+            errors.append(f"{adr.relative_to(repository).as_posix()} has invalid or missing Date")
 
     for markdown in _relative_markdown_files(repository):
         for raw_target in _markdown_links(markdown):
@@ -186,13 +186,13 @@ def collect_errors(repository: Path = REPOSITORY) -> list[str]:
             target, fragment = resolved
             if not target.exists():
                 errors.append(
-                    f"broken relative link in {markdown.relative_to(repository)}: {raw_target}"
+                    f"broken relative link in {markdown.relative_to(repository).as_posix()}: {raw_target}"
                 )
                 continue
             if fragment and target.is_file() and target.suffix == ".md":
                 if fragment not in _anchors(target):
                     errors.append(
-                        f"broken heading link in {markdown.relative_to(repository)}: {raw_target}"
+                        f"broken heading link in {markdown.relative_to(repository).as_posix()}: {raw_target}"
                     )
 
     version = (repository / "VERSION").read_text(encoding="utf-8").strip()
@@ -225,7 +225,7 @@ def collect_errors(repository: Path = REPOSITORY) -> list[str]:
         )
         if stale:
             errors.append(
-                f"{path.relative_to(repository)} contains stale current-series releases: "
+                f"{path.relative_to(repository).as_posix()} contains stale current-series releases: "
                 + ", ".join(f"v{item}" for item in stale)
             )
 

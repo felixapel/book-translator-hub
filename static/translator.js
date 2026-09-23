@@ -240,6 +240,22 @@
                 localStorage.setItem(CACHE_PREFIX + TARGET_LANG, JSON.stringify(trimmed));
             } catch (e2) { /* give up persisting; in-memory cache still works */ }
         }
+        persistToIndexedDB(translatedParagraphs);
+    }
+
+    async function persistToIndexedDB(entries) {
+        if (!PERSIST_CACHE || !entries) return;
+        try {
+            const db = await getIDB();
+            if (!db) return;
+            const tx = db.transaction(IDB_STORE, 'readwrite');
+            const store = tx.objectStore(IDB_STORE);
+            for (const key of Object.keys(entries)) {
+                store.put({ key: key, text: entries[key] });
+            }
+        } catch (e) {
+            /* ignore IDB write failures */
+        }
     }
 
 
@@ -960,6 +976,28 @@
         window.addEventListener('resize', applyBarPosition);
     }
 
+    function setTargetLanguage(newLang) {
+        if (!availableLangCodes.has(newLang) || newLang === TARGET_LANG) return;
+        persistCacheNow();
+        TARGET_LANG = newLang;
+        localStorage.setItem('bt_lang', TARGET_LANG);
+        bookPrefRemember('bt_lang', TARGET_LANG);
+
+        const barSel = document.getElementById('bt-lang');
+        if (barSel && barSel.value !== TARGET_LANG) barSel.value = TARGET_LANG;
+        const menuSel = document.getElementById('bt-menu-target-lang');
+        if (menuSel && menuSel.value !== TARGET_LANG) menuSel.value = TARGET_LANG;
+
+        newGeneration();
+        translatedParagraphs = loadCacheForLang(TARGET_LANG);
+        if (translationMode !== 'off') {
+            removeAllTranslations();
+            translateCurrentPage();
+        }
+        buildMenu();
+        refreshStatus();
+    }
+
     function createFloatingUI() {
         if (document.getElementById('bt-bar')) return;
 
@@ -1021,28 +1059,6 @@
                 : translationMode === 'bilingual' ? 'translated' : 'off';
             setMode(next);
         };
-
-        function setTargetLanguage(newLang) {
-            if (!availableLangCodes.has(newLang) || newLang === TARGET_LANG) return;
-            persistCacheNow();
-            TARGET_LANG = newLang;
-            localStorage.setItem('bt_lang', TARGET_LANG);
-            bookPrefRemember('bt_lang', TARGET_LANG);
-
-            const barSel = document.getElementById('bt-lang');
-            if (barSel && barSel.value !== TARGET_LANG) barSel.value = TARGET_LANG;
-            const menuSel = document.getElementById('bt-menu-target-lang');
-            if (menuSel && menuSel.value !== TARGET_LANG) menuSel.value = TARGET_LANG;
-
-            newGeneration();
-            translatedParagraphs = loadCacheForLang(TARGET_LANG);
-            if (translationMode !== 'off') {
-                removeAllTranslations();
-                translateCurrentPage();
-            }
-            buildMenu();
-            refreshStatus();
-        }
 
         const sel = document.getElementById('bt-lang');
         sel.onchange = (e) => setTargetLanguage(e.target.value);

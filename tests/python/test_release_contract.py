@@ -289,7 +289,7 @@ class ReleasePreflightTests(unittest.TestCase):
 
 class ReleaseWorkflowContractTests(unittest.TestCase):
     def test_changelog_has_one_active_unreleased_section(self):
-        changelog = (ROOT / "CHANGELOG.md").read_text()
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         self.assertEqual(changelog.count("\n## [Unreleased]\n"), 1)
         unreleased = changelog.split("## [Unreleased]", 1)[1].split("\n## [", 1)[0]
         if unreleased.strip():
@@ -299,8 +299,8 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
             )
 
     def test_v214_compose_upgrade_is_offline_external_and_reversible(self):
-        lifecycle = (ROOT / "docs" / "operations" / "lifecycle.md").read_text()
-        gitignore = (ROOT / ".gitignore").read_text()
+        lifecycle = (ROOT / "docs" / "operations" / "lifecycle.md").read_text(encoding="utf-8")
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
 
         for contract in (
             "stops the only writer",
@@ -323,8 +323,8 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
     def test_ci_uses_provider_appropriate_docker_runners(self):
         # Gitea uses the first existing workflow directory. Once .gitea exists,
         # a missing CI copy would silently remove every normal push/PR gate.
-        gitea_ci = GITEA_CI.read_text()
-        github_ci = GITHUB_CI.read_text()
+        gitea_ci = GITEA_CI.read_text(encoding="utf-8")
+        github_ci = GITHUB_CI.read_text(encoding="utf-8")
         self.assertRegex(
             gitea_ci,
             r"(?m)^  docker-smoke:\n    runs-on: weebdb-docker$",
@@ -335,7 +335,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         )
 
     def test_source_release_is_gated_by_preflight_and_all_quality_checks(self):
-        workflow = GITEA_RELEASE.read_text()
+        workflow = GITEA_RELEASE.read_text(encoding="utf-8")
         self.assertIn("fetch-depth: 0", workflow)
         self.assertIn("scripts/release_preflight.py", workflow)
         self.assertIn(
@@ -345,7 +345,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", workflow)
 
     def test_release_runbook_mirrors_exact_tag_before_gitea_trigger(self):
-        release = (ROOT / "docs" / "maintainers" / "release.md").read_text()
+        release = (ROOT / "docs" / "maintainers" / "release.md").read_text(encoding="utf-8")
         github = release.index("Push that exact object to the public GitHub")
         gitea = release.index("then push the same tag object to authoritative Gitea")
 
@@ -353,7 +353,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("Gitea tag workflow immediately verifies", release)
 
     def test_unverified_tag_code_cannot_run_before_trusted_preflight(self):
-        workflow = GITEA_RELEASE.read_text()
+        workflow = GITEA_RELEASE.read_text(encoding="utf-8")
         self.assertIn("ref: main", workflow)
         self.assertIn("path: trusted", workflow)
         self.assertIn("path: candidate", workflow)
@@ -366,7 +366,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
             )
 
     def test_gitea_release_avoids_unsupported_workflow_features(self):
-        workflow = GITEA_RELEASE.read_text()
+        workflow = GITEA_RELEASE.read_text(encoding="utf-8")
         conditional_lines = [
             line.strip() for line in workflow.splitlines()
             if line.strip().startswith("if:")
@@ -376,7 +376,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("timeout-minutes:", workflow)
 
     def test_release_reuses_every_required_ci_contract(self):
-        workflow = GITEA_RELEASE.read_text()
+        workflow = GITEA_RELEASE.read_text(encoding="utf-8")
         for command in (
             "git ls-files -z -- '*.py' | xargs -0 -r python3 -m py_compile",
             "python3 -m tests.python.test_translation",
@@ -400,7 +400,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertIn("BT_COVERAGE_FAIL_UNDER: \"60\"", workflow)
 
     def test_release_docker_smoke_uses_the_host_runner_and_scoped_names(self):
-        workflow = GITEA_RELEASE.read_text()
+        workflow = GITEA_RELEASE.read_text(encoding="utf-8")
         self.assertRegex(
             workflow,
             r"(?m)^  docker-smoke:\n    needs: preflight\n"
@@ -411,7 +411,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("bt-release-audit:${{ gitea.run_id }}", workflow)
 
     def test_release_is_source_only_and_requires_no_secrets(self):
-        workflow = GITEA_RELEASE.read_text()
+        workflow = GITEA_RELEASE.read_text(encoding="utf-8")
         self.assertNotIn("publish:", workflow)
         self.assertNotIn("secrets.", workflow)
         self.assertNotIn("docker login", workflow)

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import ipaddress
 import hashlib
 import json
@@ -103,6 +106,8 @@ class ConfigError(ValueError):
 
 def _fsync_directory(path: Path) -> None:
     """Flush one real directory without following its final path component."""
+    if os.name == "nt":
+        return
     descriptor: int | None = None
     try:
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
@@ -297,6 +302,17 @@ class OperationLock:
     def __enter__(self) -> "OperationLock":
         if self.state_dir.is_symlink() or self.lock_target.is_symlink():
             raise ConfigError("lifecycle lock destination must not be a symbolic link")
+        if os.name == "nt" or fcntl is None:
+            if self.create:
+                self.lock_target.mkdir(parents=True, mode=0o700, exist_ok=True)
+            elif not self.lock_target.is_dir():
+                raise ConfigError(
+                    "lifecycle lock parent does not exist for read-only locking"
+                )
+            lock_file = self.lock_target / ".btctl_operation.lock"
+            flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
+            self._descriptor = os.open(lock_file, flags)
+            return self
         try:
             if self.create:
                 self.lock_target.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -329,7 +345,8 @@ class OperationLock:
         self._descriptor = None
         if descriptor is not None:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
             finally:
                 os.close(descriptor)
 

@@ -205,16 +205,19 @@ def _parse_cookie_header(raw: str) -> OrderedDict[str, str]:
     for part in raw.split(";"):
         item = part.strip()
         if not item or "=" not in item:
-            raise BrokerRejected("authentication rejected")
+            continue
         name, value = item.split("=", 1)
-        if (
-            not _COOKIE_NAME_RE.fullmatch(name)
-            or name in parsed
-            or not value
-            or len(value) > 8192
-            or any(ord(character) < 33 or ord(character) == 127 for character in value)
-        ):
-            raise BrokerRejected("authentication rejected")
+        name = name.strip()
+        value = value.strip()
+        if not _COOKIE_NAME_RE.fullmatch(name) or name in parsed:
+            continue
+        # RFC 6265 allows values enclosed in double quotes
+        if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+            value = value[1:-1]
+        if not value or len(value) > 8192:
+            continue
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            continue
         parsed[name] = value
     return parsed
 
@@ -586,7 +589,7 @@ def load_or_create_session_key(path: Path) -> bytes:
         try:
             descriptor = os.open(
                 target,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0),
                 0o600,
             )
         except FileExistsError:
@@ -599,29 +602,33 @@ def load_or_create_session_key(path: Path) -> bytes:
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.chmod(target, 0o600, follow_symlinks=False)
-                directory_fd = os.open(
-                    target.parent,
-                    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-                )
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
+                if hasattr(os, "O_DIRECTORY") and os.name != "nt":
+                    try:
+                        directory_fd = os.open(
+                            target.parent,
+                            os.O_RDONLY | os.O_DIRECTORY,
+                        )
+                        try:
+                            os.fsync(directory_fd)
+                        finally:
+                            os.close(directory_fd)
+                    except OSError:
+                        pass
             except BaseException:
                 try:
                     target.unlink()
                 except OSError:
                     pass
                 raise
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
         descriptor = os.open(target, flags)
         try:
             metadata = os.fstat(descriptor)
             if (
                 not stat.S_ISREG(metadata.st_mode)
                 or metadata.st_nlink != 1
-                or metadata.st_uid != os.geteuid()
-                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or (hasattr(os, "geteuid") and metadata.st_uid != os.geteuid())
+                or (os.name != "nt" and stat.S_IMODE(metadata.st_mode) != 0o600)
                 or metadata.st_size != 32
             ):
                 raise BrokerConfigError("reader session key must be one private owned file")

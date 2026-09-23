@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   smoke gate.
 - Prevented stale translation state across reader navigation, iframe
   replacement and saved-preference changes.
+- Fixed `setTargetLanguage` scope in frontend script (`static/translator.js`)
+  preventing runtime ReferenceError on dynamic target language switching.
+- Completed IndexedDB cache write path (`persistToIndexedDB`) to persist cached
+  book chapters asynchronously across reader sessions.
+- Propagated HTTP stream errors immediately via `raise_for_status()` on
+  `/translate/stream` to prevent stalled SSE requests.
+- Hardened RFC 6265 cookie header tokenization in `reader_session.py` against
+  malformed, quoted, or trailing semicolons in upstream authentication headers.
+- Hardened cross-platform filesystem locking, permissions, and directory flushing
+  in `btctl_core.py` and test contracts for Windows environments.
 - Kept the exact Kavita `0.9.1.4` native-account fixture contract explicit;
   it does not establish public-browser or OIDC acceptance.
 - Kept hub smoke response headers in a runner-owned temporary file and accepted
