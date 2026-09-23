@@ -1,5 +1,8 @@
 """Security contracts for the built image and recommended topology."""
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -7,7 +10,59 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def run_entrypoint_ui_version(version, assets, missing=None, root=None):
+    """Execute the entrypoint's exact UI-version block against temporary assets."""
+    if root is None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            return run_entrypoint_ui_version(version, assets, missing, Path(raw_dir))
+    entrypoint = (ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
+    start = entrypoint.index('BT_UI_VERSION="$(cat /app/VERSION')
+    end = entrypoint.index('\n\n# Reader upstream normalization', start)
+    root = Path(root)
+    static = root / "static"
+    static.mkdir(exist_ok=True)
+    (root / "VERSION").write_text(version, encoding="utf-8")
+    for name, content in assets.items():
+        target = static / name
+        if name == missing:
+            target.unlink(missing_ok=True)
+        else:
+            target.write_text(content, encoding="utf-8")
+    version_path = str(root / "VERSION").replace("\\", "/")
+    static_path = str(static).replace("\\", "/")
+    block = entrypoint[start:end].replace("/app/VERSION", version_path).replace(
+        "/app/static", static_path
+    )
+    shell = shutil.which("sh") or r"C:\Program Files\Git\bin\bash.exe"
+    shell_options = "-leu" if shell.lower().endswith("bash.exe") else "-eu"
+    return subprocess.run(
+        [shell, shell_options, "-c", block + '\nprintf "%s" "$BT_UI_VERSION"'],
+        text=True, capture_output=True, check=False,
+    )
+
+
 class ContainerContractTests(unittest.TestCase):
+    def test_entrypoint_ui_version_tracks_all_packaged_overlay_assets(self):
+        assets = {
+            "loader.js": "loader baseline\n",
+            "translator.js": "translator baseline\n",
+            "translator.css": "css baseline\n",
+        }
+        with tempfile.TemporaryDirectory() as raw_dir:
+            first = run_entrypoint_ui_version("2.4.1\n", assets, root=raw_dir)
+            second = run_entrypoint_ui_version("2.4.1\n", assets, root=raw_dir)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertEqual(first.stdout, second.stdout)
+            self.assertRegex(first.stdout, r"^2\.4\.1-[a-f0-9]{12}$")
+            for changed_name in assets:
+                changed = dict(assets)
+                changed[changed_name] += "changed\n"
+                result = run_entrypoint_ui_version("2.4.1\n", changed, root=raw_dir)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotEqual(result.stdout, first.stdout, changed_name)
+            missing = run_entrypoint_ui_version("2.4.1\n", assets, missing="translator.css", root=raw_dir)
+            self.assertNotEqual(missing.returncode, 0)
+
     def test_image_declares_the_existing_stable_non_root_identity(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
         self.assertIn("addgroup -S -g 102 appuser", dockerfile)

@@ -2,7 +2,7 @@ const fs = require('fs');
 const assert = require('assert');
 const path = require('path');
 const jsdom = require("jsdom");
-const { JSDOM } = jsdom;
+const { JSDOM, requestInterceptor } = jsdom;
 
 const root = path.resolve(__dirname, '../..');
 const code = fs.readFileSync(path.join(root, 'static/translator.js'), 'utf-8');
@@ -851,6 +851,45 @@ async function assertManagedLoaderContract() {
     assert.strictEqual(loaderDom.window.BOOK_TRANSLATOR.targetLang, 'Spanish');
     assert(loaderDom.window.document.querySelector('link[href*="translator.css"]'));
     assert(loaderDom.window.document.querySelector('script[src*="translator.js"]'));
+    loaderDom.window.close();
+}
+
+async function assertLoaderPropagatesCompoundAssetVersion() {
+    const version = '2.4.1-0123456789ab';
+    const loaderDom = new JSDOM(
+        `<!doctype html><html><head><script src="/bt-static/loader.js?v=${version}"></script></head><body></body></html>`,
+        {
+            url: 'https://books.example.test/read/1', runScripts: 'dangerously',
+            resources: {
+                interceptors: [requestInterceptor(async request => {
+                    if (request.url === `https://books.example.test/bt-static/loader.js?v=${version}`) {
+                        return new Response(loaderCode, { headers: { 'Content-Type': 'application/javascript' } });
+                    }
+                    if (request.url === `https://books.example.test/bt-static/translator.js?v=${version}`
+                            || request.url === `https://books.example.test/bt-static/translator.css?v=${version}`) {
+                        return new Response('', { headers: { 'Content-Type': 'text/plain' } });
+                    }
+                    throw new Error(`Unexpected asset request in isolated loader test: ${request.url}`);
+                })]
+            },
+            beforeParse(window) {
+                window.fetch = async () => ({
+                    ok: true,
+                    json: async () => ({
+                        apiUrl: '/bt-api', authMode: 'cwa_session', credentials: 'same-origin'
+                    })
+                });
+            }
+        }
+    );
+    const deadline = Date.now() + 1000;
+    while (!loaderDom.window.document.querySelector('script[src*="translator.js"]')
+            && Date.now() < deadline) await wait(10);
+    const translator = loaderDom.window.document.querySelector('script[src*="translator.js"]');
+    const stylesheet = loaderDom.window.document.querySelector('link[href*="translator.css"]');
+    assert(translator && stylesheet, 'A loaded compound-version loader must inject both overlay assets');
+    assert.strictEqual(new URL(translator.src).searchParams.get('v'), version);
+    assert.strictEqual(new URL(stylesheet.href).searchParams.get('v'), version);
     loaderDom.window.close();
 }
 
@@ -1791,9 +1830,62 @@ async function assertPluginChildrenDoNotHideTitleOrHeadingAnchor() {
     titleDom.window.close();
 }
 
+async function assertCalibreTocAnchorsRemainDistinctFromProseLinks() {
+    const tocDom = new JSDOM('<!doctype html><body><div id="viewer"><iframe></iframe></div></body>', {
+        url: 'https://books.example.test/read/42/epub', runScripts: 'dangerously'
+    });
+    tocDom.window.BOOK_TRANSLATOR = { apiUrl: '/bt-api', authMode: 'cwa_session', readerType: 'cwa' };
+    tocDom.window.localStorage.setItem('bt_prefetch', '0');
+    tocDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const chapter = tocDom.window.document.querySelector('iframe').contentDocument;
+    chapter.documentElement.lang = 'en';
+    chapter.body.innerHTML = `<div class="calibre1" id="toc"><ul>
+      <li class="calibre5"><a id="toc-one" class="feed" href="#one">First chapter</a></li>
+      <li class="calibre5"><a id="toc-two" class="feed" href="#two">Second chapter</a></li>
+    </ul></div><p id="prose">Read <a id="prose-link" href="#prose">this prose link</a>.</p>
+    <div id="leaf-prose">Leaf <a id="leaf-link" href="#leaf">prose link</a>.</div>
+    <div id="header-wrapper"><header>Contents</header><a id="header-link" href="#header">Header entry</a></div>`;
+    chapter.querySelectorAll('a,p,div').forEach(node => {
+        node.getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
+    });
+    const payloads = [];
+    tocDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) return { ok: true, status: 200, json: async () => ({
+            primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef'
+        }), headers: { get: () => null } };
+        const payload = JSON.parse(options.body);
+        payloads.push(payload);
+        return { ok: true, status: 200, json: async () => ({ translations: payload.paragraphs.map(text => `ES: ${text}`) }), headers: { get: () => null } };
+    };
+    const script = tocDom.window.document.createElement('script');
+    script.textContent = code;
+    tocDom.window.document.body.appendChild(script);
+    await activateReader(tocDom.window);
+    let deadline = Date.now() + 1500;
+    while (payloads.flatMap(payload => payload.paragraphs).length < 5 && Date.now() < deadline) await wait(10);
+    const requested = payloads.flatMap(payload => payload.paragraphs);
+    assert.deepStrictEqual(requested.sort(), ['First chapter', 'Second chapter', 'Read this prose link.', 'Leaf prose link.', 'Header entry'].sort(),
+        'Calibre TOC anchors must be selected once while prose links remain with their paragraph or leaf div');
+    assert.strictEqual(chapter.querySelector('#toc').querySelectorAll('.bt-translation').length, 2,
+        'The Calibre wrapper and list items must not become duplicate translation candidates');
+    assert.strictEqual(chapter.querySelector('#toc-one').getAttribute('href'), '#one');
+    assert.strictEqual(chapter.querySelector('#toc-two').getAttribute('href'), '#two');
+    assert.strictEqual(chapter.querySelector('#leaf-prose > .bt-translation').textContent, 'ES: Leaf prose link.',
+        'A prose leaf div must be translated once as a whole while its inline link stays intact');
+    assert.strictEqual(chapter.querySelector('#leaf-link .bt-translation'), null,
+        'A prose link in a leaf div must not become a duplicate candidate');
+    assert.strictEqual(chapter.querySelector('#header-wrapper > .bt-translation'), null,
+        'A structural wrapper must not become a translation candidate');
+    assert(chapter.querySelector('#header-link > .bt-translation'),
+        'An anchor below a structural wrapper must remain individually selectable');
+    assert.strictEqual(chapter.querySelector('#header-link').getAttribute('href'), '#header');
+    tocDom.window.close();
+}
+
 async function runTest() {
     console.log("Starting frontend assertions test...");
     await assertManagedLoaderContract();
+    await assertLoaderPropagatesCompoundAssetVersion();
     
     // 1. Initial page load will trigger visible queue (1 chunk) then prefetch queue (3 chunks).
     // Let's provide a 429 response first for the visible request.
@@ -2025,6 +2117,7 @@ async function runTest() {
     await assertProviderPolicyDeadlineFailsClosed();
     await assertRenderedSameLocationReconcilesReplacementOnce();
     await assertPluginChildrenDoNotHideTitleOrHeadingAnchor();
+    await assertCalibreTocAnchorsRemainDistinctFromProseLinks();
 
     console.log("All assertions passed.");
     process.exit(0);

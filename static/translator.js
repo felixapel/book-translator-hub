@@ -1500,6 +1500,22 @@
         return Array.from(el.querySelectorAll(selector)).some(node => !isBtNode(node));
     }
 
+    const LEAF_PROSE_DIV_DESCENDANTS =
+        'div, ul, ol, li, h1, h2, h3, h4, h5, h6, p, blockquote, td, th, table, section, article, aside, nav, form, button, input, select, textarea, [role], header, footer, main, figure, pre, code';
+
+    function isLeafProseDiv(el) {
+        return !!el && el.tagName && el.tagName.toLowerCase() === 'div'
+            && !hasContentDescendant(el, LEAF_PROSE_DIV_DESCENDANTS);
+    }
+
+    function isProseLink(el) {
+        if (el.closest('p, blockquote')) return true;
+        const wrapper = el.closest('div');
+        // A leaf div is prose just like a paragraph. Calibre TOC/chapter
+        // wrappers contain list or heading structure and therefore return false.
+        return isLeafProseDiv(wrapper);
+    }
+
     // Canonical, de-duplicated set of translatable elements in a given document.
     function getTranslatableElements(doc) {
         if (!doc) return [];
@@ -1521,12 +1537,13 @@
                 // Keep prose links with their paragraph, but select leaf links in
                 // in-book TOCs so their href and click behaviour remain on the
                 // original anchor. A containing li is dropped below.
-                if (el.closest('p, div.calibre1, div.text, blockquote')) return false;
+                if (isProseLink(el)) return false;
                 return !hasContentDescendant(el, 'p, blockquote, li, td, div, h1, h2, h3, h4, h5, h6');
             }
 
             // Blocks containing a link: let the link translate itself (keeps it clickable).
-            if (['li', 'div', 'td'].includes(tagName) && hasContentDescendant(el, 'a')) return false;
+            if (['li', 'td'].includes(tagName) && hasContentDescendant(el, 'a')) return false;
+            if (tagName === 'div' && !isLeafProseDiv(el) && hasContentDescendant(el, 'a')) return false;
 
             // Containers holding other block children: translate the children, not
             // the wrapper. `section`/`article` matter: chapter wrappers like
@@ -1534,13 +1551,13 @@
             // unfiltered, get translated as ONE mega-block containing the whole
             // chapter (seen in production with a Calibre-converted epub).
             if (['div', 'blockquote', 'li', 'td', 'section', 'article', 'aside'].includes(tagName)
-                && hasContentDescendant(el, 'p, h1, h2, h3, h4, h5, h6, li, blockquote, div, a, td, th, section, article, aside, nav, table, ul, ol')) return false;
+                && hasContentDescendant(el, 'p, h1, h2, h3, h4, h5, h6, li, blockquote, div, td, th, section, article, aside, nav, table, ul, ol')) return false;
 
             // Generic divs are useful in EPUBs that encode a paragraph as a
             // plain leaf div. Accept only text leaves: reader shells, controls,
             // and chapter wrappers all carry one of these descendants.
             if (tagName === 'div' && hasContentDescendant(el,
-                'a, button, input, select, textarea, [role], p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th, section, article, aside, nav, table, ul, ol, form, header, footer, main, figure, pre, code'
+                'button, input, select, textarea, [role], p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th, section, article, aside, nav, table, ul, ol, form, header, footer, main, figure, pre, code'
             )) return false;
 
             return true;
