@@ -1,10 +1,11 @@
 # Book Translator Hub
 
 <p align="center">
-  <img src="docs/assets/hero-banner.jpg" alt="Book Translator Hub Hero Banner" width="100%">
+  <img src="docs/assets/hero-editorial.png" alt="Book Translator Hub — bilingual EPUB reading, illustrated by an open book" width="100%">
 </p>
 
 <p align="center">
+  <a href="https://github.com/felixapel/book-translator-hub/releases/latest"><img src="https://img.shields.io/github/v/release/felixapel/book-translator-hub?style=flat-square" alt="Latest published release"></a>
   <a href="https://github.com/felixapel/book-translator-hub/actions"><img src="https://img.shields.io/badge/CI-gated-0ea5e9.svg?style=flat-square" alt="CI-gated"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square" alt="License: GPL-3.0"></a>
   <img src="https://img.shields.io/badge/Python-3.11-3776ab.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.11">
@@ -20,7 +21,8 @@
 ---
 
 <p align="center">
-  <img src="docs/assets/bilingual-reading-showcase.jpg" alt="Bilingual Reading Showcase" width="100%">
+  <img src="docs/assets/bilingual-reading-editorial.png" alt="Concept illustration of aligned original and translated paragraphs beside an e-reader" width="100%">
+  <br><sub>Editorial illustration of bilingual reading, not a product screenshot.</sub>
 </p>
 
 ## ✨ What it does
@@ -36,19 +38,12 @@
 
 ---
 
-<p align="center">
-  <img src="docs/assets/architecture-pipeline.jpg" alt="Reading Pipeline Architecture" width="100%">
-</p>
-
----
-
-<p align="center">
-  <img src="docs/assets/eink-mode-showcase.jpg" alt="E-Ink High Contrast Mode Showcase" width="100%">
-</p>
-
----
-
 ## 🚀 Supported installation
+
+Choose a tag from the [published releases](https://github.com/felixapel/book-translator-hub/releases).
+`VERSION` identifies the checked-out source; changes on `main` may not yet be
+available in a published release. See the [release process](docs/maintainers/release.md)
+for the acceptance and publication requirements.
 
 The production path is the universal `btctl` hub. It builds an immutable local
 image from an exact clean checkout and runs CWA, Kavita or both through
