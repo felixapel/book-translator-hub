@@ -320,6 +320,7 @@
 
     function newGeneration() {
         generation++;
+        pendingAnchorRelocation = null;
         invalidateParagraphsCache();
         rateLimitResponses.clear();
         if (prefetchWaitWake) prefetchWaitWake();
@@ -372,8 +373,10 @@
     }
 
     function renderMode(elements) {
-        if (translationMode === 'bilingual') showTranslationsBilingual(elements);
-        else if (translationMode === 'translated') showTranslationsInline('translated', elements);
+        withCwaReaderAnchor(() => {
+            if (translationMode === 'bilingual') showTranslationsBilingual(elements);
+            else if (translationMode === 'translated') showTranslationsInline('translated', elements);
+        });
     }
 
     // ── i18n ───────────────────────────────────────────────────────────
@@ -828,7 +831,7 @@
         if (mode === 'off') {
             disconnectReaderContentObserver();
             newGeneration();              // cancel in-flight work; next ON starts clean
-            removeAllTranslations();
+            withCwaReaderAnchor(() => removeAllTranslations());
             refreshStatus();
             if (!silent) showToast(t.off);
         } else if (prevMode === 'off') {
@@ -1487,31 +1490,43 @@
             || (el.classList && (el.classList.contains('bt-translation') || el.classList.contains('bt-loading') || el.classList.contains('bt-feedback')));
     }
 
+    function isReaderChromeNode(el) {
+        return !!(el && el.closest && el.closest(
+            '#bt-bar, #bt-menu, #bt-toast, script, style, template, nav, [role="navigation"]'
+        ));
+    }
+
+    function hasContentDescendant(el, selector) {
+        return Array.from(el.querySelectorAll(selector)).some(node => !isBtNode(node));
+    }
+
     // Canonical, de-duplicated set of translatable elements in a given document.
     function getTranslatableElements(doc) {
         if (!doc) return [];
         const rawElements = Array.from(doc.querySelectorAll(
-            'p, blockquote, li, td, h1, h2, h3, h4, h5, h6, div.calibre1, div.text, a, ' +
+            'p, blockquote, li, td, h1, h2, h3, h4, h5, h6, div, a, ' +
             '[class*="title"], [class*="subtitle"], [class*="chapter"], [class*="author"], ' +
             '[class*="heading"], [class*="epigraph"], [class*="quote"], [class*="verse"]'
         ));
 
         // 1. Filter for content, layout, and exclusions.
         const filtered = rawElements.filter(el => {
-            if (isPluginNode(el)) return false;                 // never translate our own UI
+            if (isPluginNode(el) || isReaderChromeNode(el)) return false;
             const text = el.textContent.trim();
             if (text.length < 2) return false;
 
             const tagName = el.tagName.toLowerCase();
 
             if (tagName === 'a') {
-                // Only standalone links (e.g. TOC entries); skip links inside prose.
-                if (el.closest('p, div.calibre1, div.text, blockquote, li')) return false;
-                return true;
+                // Keep prose links with their paragraph, but select leaf links in
+                // in-book TOCs so their href and click behaviour remain on the
+                // original anchor. A containing li is dropped below.
+                if (el.closest('p, div.calibre1, div.text, blockquote')) return false;
+                return !hasContentDescendant(el, 'p, blockquote, li, td, div, h1, h2, h3, h4, h5, h6');
             }
 
             // Blocks containing a link: let the link translate itself (keeps it clickable).
-            if (['li', 'div', 'td'].includes(tagName) && el.querySelector('a')) return false;
+            if (['li', 'div', 'td'].includes(tagName) && hasContentDescendant(el, 'a')) return false;
 
             // Containers holding other block children: translate the children, not
             // the wrapper. `section`/`article` matter: chapter wrappers like
@@ -1519,7 +1534,14 @@
             // unfiltered, get translated as ONE mega-block containing the whole
             // chapter (seen in production with a Calibre-converted epub).
             if (['div', 'blockquote', 'li', 'td', 'section', 'article', 'aside'].includes(tagName)
-                && el.querySelector('p, h1, h2, h3, h4, h5, h6, li, blockquote, div.calibre1, div.text')) return false;
+                && hasContentDescendant(el, 'p, h1, h2, h3, h4, h5, h6, li, blockquote, div, a, td, th, section, article, aside, nav, table, ul, ol')) return false;
+
+            // Generic divs are useful in EPUBs that encode a paragraph as a
+            // plain leaf div. Accept only text leaves: reader shells, controls,
+            // and chapter wrappers all carry one of these descendants.
+            if (tagName === 'div' && hasContentDescendant(el,
+                'a, button, input, select, textarea, [role], p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th, section, article, aside, nav, table, ul, ol, form, header, footer, main, figure, pre, code'
+            )) return false;
 
             return true;
         });
@@ -1563,6 +1585,53 @@
         return elements;
     }
 
+    function intersectRects(a, b) {
+        const left = Math.max(a.left, b.left);
+        const top = Math.max(a.top, b.top);
+        const right = Math.min(a.right, b.right);
+        const bottom = Math.min(a.bottom, b.bottom);
+        return right > left && bottom > top;
+    }
+
+    function rectForElement(el) {
+        const rect = el.getBoundingClientRect();
+        return {
+            left: rect.left, top: rect.top,
+            right: Number.isFinite(rect.right) ? rect.right : rect.left + rect.width,
+            bottom: Number.isFinite(rect.bottom) ? rect.bottom : rect.top + rect.height,
+            width: rect.width, height: rect.height
+        };
+    }
+
+    function cwaClippingViewport(iframe) {
+        const viewport = {
+            left: 0, top: 0,
+            right: window.innerWidth || document.documentElement.clientWidth || 0,
+            bottom: window.innerHeight || document.documentElement.clientHeight || 0
+        };
+        let clip = viewport;
+        let node = iframe && iframe.parentElement;
+        while (node && node !== document.body) {
+            const isKnownReaderClip = node.matches && node.matches('#viewer, .epub-container');
+            let clipsOverflow = false;
+            try {
+                const style = window.getComputedStyle(node);
+                clipsOverflow = /hidden|clip|scroll|auto/.test(`${style.overflow} ${style.overflowX} ${style.overflowY}`);
+            } catch (e) { /* jsdom / detached nodes */ }
+            if (isKnownReaderClip || clipsOverflow) {
+                const rect = rectForElement(node);
+                if (rect.width > 0 && rect.height > 0) {
+                    clip = {
+                        left: Math.max(clip.left, rect.left), top: Math.max(clip.top, rect.top),
+                        right: Math.min(clip.right, rect.right), bottom: Math.min(clip.bottom, rect.bottom)
+                    };
+                }
+            }
+            node = node.parentElement;
+        }
+        return clip;
+    }
+
     function getVisibleParagraphs() {
         // Filter the SAME canonical, de-duplicated set used everywhere else, so
         // visible-first covers headings/lists too and the prefetch complement is
@@ -1584,16 +1653,114 @@
         if (!iframe || !iframe.contentDocument) {
             return all.slice(0, 5);
         }
-        const iframeWidth = iframe.clientWidth || window.innerWidth;
-        const iframeHeight = iframe.clientHeight || window.innerHeight;
+        // EPUB.js may size this iframe to an entire multi-column chapter. The
+        // element coordinates are local to that expanded iframe, while the
+        // reader only exposes a clipped part of it through #viewer. Project
+        // every fragment into the parent page and intersect that real viewport.
+        const iframeRect = rectForElement(iframe);
+        const viewport = cwaClippingViewport(iframe);
 
         return all.filter(el => {
-            const rect = el.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) return false;
-            const isHorizVisible = (rect.left >= -100 && rect.left < iframeWidth - 20);
-            const isVertVisible = (rect.top >= -100 && rect.top < iframeHeight - 20);
-            return isHorizVisible && isVertVisible;
+            const fragments = typeof el.getClientRects === 'function'
+                ? Array.from(el.getClientRects()) : [];
+            const rects = fragments.length ? fragments : [rectForElement(el)];
+            return rects.some(rect => {
+                if (rect.width === 0 || rect.height === 0) return false;
+                const projected = {
+                    left: iframeRect.left + rect.left,
+                    top: iframeRect.top + rect.top,
+                    right: iframeRect.left + (Number.isFinite(rect.right) ? rect.right : rect.left + rect.width),
+                    bottom: iframeRect.top + (Number.isFinite(rect.bottom) ? rect.bottom : rect.top + rect.height)
+                };
+                return intersectRects(projected, viewport);
+            });
         });
+    }
+
+    let restoringCwaReaderAnchor = false;
+
+    function cwaProjectedFragments(el, iframe) {
+        const iframeRect = rectForElement(iframe);
+        const fragments = typeof el.getClientRects === 'function'
+            ? Array.from(el.getClientRects()) : [];
+        const rects = fragments.length ? fragments : [rectForElement(el)];
+        return rects.map(rect => ({
+            left: iframeRect.left + rect.left,
+            top: iframeRect.top + rect.top,
+            right: iframeRect.left + (Number.isFinite(rect.right) ? rect.right : rect.left + rect.width),
+            bottom: iframeRect.top + (Number.isFinite(rect.bottom) ? rect.bottom : rect.top + rect.height),
+            width: rect.width, height: rect.height
+        })).filter(rect => rect.width > 0 && rect.height > 0);
+    }
+
+    function captureCwaReaderAnchor() {
+        if (READER_TYPE !== 'cwa' || restoringCwaReaderAnchor) return null;
+        const iframe = getReaderIframe();
+        const root = getReaderRoot();
+        if (!iframe || !root) return null;
+        const viewport = cwaClippingViewport(iframe);
+        const element = getVisibleParagraphs()[0];
+        if (!element) return null;
+        const fragments = cwaProjectedFragments(element, iframe);
+        const fragmentIndex = fragments.findIndex(rect => intersectRects(rect, viewport));
+        if (fragmentIndex < 0) return null;
+        const scroller = iframe.closest && iframe.closest('.epub-container')
+            || document.querySelector('.epub-container');
+        return {
+            generation, iframe, root, element, fragment: fragments[fragmentIndex], fragmentIndex,
+            scrollLeft: scroller ? scroller.scrollLeft : null,
+            scrollTop: scroller ? scroller.scrollTop : null,
+            scroller
+        };
+    }
+
+    function restoreCwaReaderAnchor(anchor) {
+        if (!anchor || generation !== anchor.generation || getReaderRoot() !== anchor.root
+                || !anchor.element.isConnected || !anchor.root.contains(anchor.element)) return;
+        if (anchor.scroller && (anchor.scroller.scrollLeft !== anchor.scrollLeft
+                || anchor.scroller.scrollTop !== anchor.scrollTop)) return;
+        const fragments = cwaProjectedFragments(anchor.element, anchor.iframe);
+        const fragment = fragments[Math.min(anchor.fragmentIndex, fragments.length - 1)];
+        if (!fragment) return;
+        if (anchor.scroller) {
+            const nextLeft = anchor.scroller.scrollLeft + fragment.left - anchor.fragment.left;
+            const nextTop = anchor.scroller.scrollTop + fragment.top - anchor.fragment.top;
+            if (nextLeft !== anchor.scroller.scrollLeft || nextTop !== anchor.scroller.scrollTop) {
+                anchor.scroller.scrollLeft = nextLeft;
+                anchor.scroller.scrollTop = nextTop;
+                const rendition = window.reader && window.reader.rendition;
+                const settled = cwaProjectedFragments(anchor.element, anchor.iframe)[
+                    Math.min(anchor.fragmentIndex, cwaProjectedFragments(anchor.element, anchor.iframe).length - 1)
+                ];
+                // EPUB.js can emit relocated synchronously after this owned
+                // scroll. Suppress exactly that event, never a later user
+                // navigation: the token binds rendition, DOM, generation,
+                // source element and final scroll offsets for a short window.
+                if (rendition && settled) {
+                    pendingAnchorRelocation = {
+                        expiresAt: Date.now() + 300,
+                        rendition, generation, root: anchor.root, element: anchor.element,
+                        scroller: anchor.scroller, scrollLeft: anchor.scroller.scrollLeft,
+                        scrollTop: anchor.scroller.scrollTop,
+                        fragmentIndex: anchor.fragmentIndex,
+                        fragmentLeft: settled.left, fragmentTop: settled.top
+                    };
+                }
+            }
+        }
+        const text = getParagraphText(anchor.element);
+        if (text) lastFirstVisibleHash = hashText(text);
+    }
+
+    function withCwaReaderAnchor(write) {
+        const anchor = captureCwaReaderAnchor();
+        restoringCwaReaderAnchor = true;
+        try {
+            return write();
+        } finally {
+            restoringCwaReaderAnchor = false;
+            restoreCwaReaderAnchor(anchor);
+        }
     }
 
     function getParagraphText(el) {
@@ -1826,6 +1993,7 @@
     const PREFETCH_CHUNK = VISIBLE_CHUNK;
     const PREFETCH_GAP_MS = boundedInteger(cfg.prefetchGapMs, 0, 10000, 0);
     const REQUEST_TIMEOUT_MS = 90000; // client-side safety net so a hung request can't freeze the UI
+    const PROVIDER_POLICY_TIMEOUT_MS = boundedInteger(cfg.providerPolicyTimeoutMs, 100, 30000, 8000);
 
     // Server rejects paragraphs beyond BT_MAX_PARAGRAPH_CHARS (default 8000)
     // with a 413 that would fail the WHOLE batch. Skip oversized elements
@@ -1874,34 +2042,59 @@
             buildMenu();
         }
         providerPolicyPromise = (async () => {
+            const controller = new AbortController();
+            let timedOut = false;
+            let deadline = null;
+            activeControllers.add(controller);
             const send = () => fetch(`${TRANSLATOR_URL}/provider-policy`, {
-                method: 'GET',
-                headers: apiRequestHeaders(),
-                credentials: apiRequestCredentials(),
-                cache: 'no-store',
+                method: 'GET', headers: apiRequestHeaders(),
+                credentials: apiRequestCredentials(), cache: 'no-store', signal: controller.signal,
             });
-            try {
+            const work = (async () => {
                 let response = await send();
+                if (timedOut || controller.signal.aborted) return false;
                 if (response.status === 401 && AUTH_MODE === 'reader_session'
                         && typeof window.__BT_REFRESH_SESSION === 'function') {
                     await window.__BT_REFRESH_SESSION();
+                    if (timedOut || controller.signal.aborted) return false;
                     response = await send();
+                    if (timedOut || controller.signal.aborted) return false;
                 }
                 if (!response.ok) return false;
                 const policy = await response.json();
-                if (!validProviderPolicy(policy)) return false;
+                if (timedOut || controller.signal.aborted || !validProviderPolicy(policy)) return false;
                 providerPolicyState = policy;
                 if (policy.fallback !== 'remote') allowCloudFallback = false;
                 buildMenu();
                 return true;
-            } catch (e) {
-                console.error('[BookTranslator] provider privacy policy unavailable');
+            })().catch((e) => {
+                if (e.name !== 'AbortError') console.error('[BookTranslator] provider privacy policy unavailable');
                 return false;
+            });
+            try {
+                const aborted = new Promise(resolve => {
+                    controller.signal.addEventListener('abort', () => resolve(false), { once: true });
+                });
+                const timeout = new Promise(resolve => {
+                    deadline = setTimeout(() => {
+                        timedOut = true;
+                        controller.abort();
+                        resolve(false);
+                    }, PROVIDER_POLICY_TIMEOUT_MS);
+                });
+                return await Promise.race([work, timeout, aborted]);
             } finally {
+                if (deadline !== null) clearTimeout(deadline);
+                activeControllers.delete(controller);
                 providerPolicyPromise = null;
             }
         })();
         return providerPolicyPromise;
+    }
+
+    function requestStillCurrent(expectedGeneration) {
+        return expectedGeneration === generation
+            && translationMode !== 'off' && readerRouteActive && !isOffline;
     }
 
     function collectUncached(elements) {
@@ -1922,12 +2115,12 @@
         return out;
     }
 
-    async function postBatch(texts) {
+    async function postBatch(texts, expectedGeneration = generation) {
         if (!TRANSLATOR_URL) {
             console.error('[BookTranslator] HTTPS requires a same-origin or TLS apiUrl');
             return { error: 'configuration' };
         }
-        if (!await loadProviderPolicy()) {
+        if (!await loadProviderPolicy() || !requestStillCurrent(expectedGeneration)) {
             return { error: 'configuration' };
         }
         const controller = new AbortController();
@@ -2035,11 +2228,11 @@
         }
     }
 
-    async function postStream(text, onChunk) {
+    async function postStream(text, onChunk, expectedGeneration = generation) {
         if (!TRANSLATOR_URL || !window.ReadableStream) {
-            return postSingle(text);
+            return postSingle(text, expectedGeneration);
         }
-        if (!await loadProviderPolicy()) {
+        if (!await loadProviderPolicy() || !requestStillCurrent(expectedGeneration)) {
             return { error: 'configuration' };
         }
         const controller = new AbortController();
@@ -2066,7 +2259,7 @@
                 signal: controller.signal,
             });
             if (!resp.ok) {
-                return postSingle(text);
+                return postSingle(text, expectedGeneration);
             }
             const reader = resp.body.getReader();
             const decoder = new TextDecoder();
@@ -2109,19 +2302,19 @@
             if (e.name === 'AbortError') {
                 return { error: controller.btTimedOut ? 'timeout' : 'aborted' };
             }
-            return postSingle(text);
+            return postSingle(text, expectedGeneration);
         } finally {
             clearTimeout(timer);
             activeControllers.delete(controller);
         }
     }
 
-    async function postSingle(text) {
+    async function postSingle(text, expectedGeneration = generation) {
         if (!TRANSLATOR_URL) {
             console.error('[BookTranslator] HTTPS requires a same-origin or TLS apiUrl');
             return { error: 'configuration' };
         }
-        if (!await loadProviderPolicy()) {
+        if (!await loadProviderPolicy() || !requestStillCurrent(expectedGeneration)) {
             return { error: 'configuration' };
         }
         const controller = new AbortController();
@@ -2251,6 +2444,17 @@
                     batch = prefetchQueue.slice(0, PREFETCH_CHUNK);
                     prefetchQueue = prefetchQueue.slice(PREFETCH_CHUNK);
                 }
+
+                // A user can turn a page while an earlier batch waits behind
+                // another request. Re-check visible work at admission time so
+                // a still-connected but now clipped paragraph is never sent.
+                if (isVisible) {
+                    const visibleNow = new Set(getVisibleParagraphs());
+                    batch = batch.filter(item => visibleNow.has(item.el)
+                        && isCurrentReaderElement(item.el)
+                        && getParagraphText(item.el) === item.text);
+                    if (batch.length === 0) continue;
+                }
                 
                 isTranslating = isVisible;
                 isPrefetching = !isVisible;
@@ -2290,7 +2494,7 @@
                 let data = null;
                 nextPrefetchAt = Date.now() + PREFETCH_GAP_MS;
                 try {
-                    data = await postBatch(batch.map(b => b.text));
+                    data = await postBatch(batch.map(b => b.text), batch[0].gen);
                 } catch (e) {
                     console.error("Translation request failed:", e);
                     markBatchFailed(batch);
@@ -2331,10 +2535,12 @@
                     continue;
                 }
 
+                const stillCurrent = (item) => isCurrentReaderElement(item.el)
+                    && getParagraphText(item.el) === item.text;
                 let stored = false, anyGood = false;
                 data.translations.forEach((tr, idx) => {
                     if (idx >= batch.length) return; // defensive: never trust response length
-                    if (!isBadTranslation(tr)) {
+                    if (!isBadTranslation(tr) && stillCurrent(batch[idx])) {
                         translatedParagraphs[batch[idx].hash] = tr;
                         rateLimitResponses.delete(batch[idx].hash);
                         stored = true;
@@ -2345,12 +2551,12 @@
                 // Split the batch into translated vs failed (backend error
                 // markers / empty). Only an explicit user action retries a
                 // failed paragraph; successful entries remain available.
-                const succeeded = batch.filter(b => translatedParagraphs[b.hash]);
+                const succeeded = batch.filter(b => stillCurrent(b) && translatedParagraphs[b.hash]);
                 chapterDone += succeeded.length;
                 if (isVisible && succeeded.length > 0) {
                     firstVisibleBatchCompleted = true;
                 }
-                const failed = batch.filter(b => !translatedParagraphs[b.hash]);
+                const failed = batch.filter(b => stillCurrent(b) && !translatedParagraphs[b.hash]);
                 if (failed.length) markBatchFailed(failed);
                 else if (anyGood) errorCount = 0;
                 if (!isVisible) isPrefetching = false;
@@ -2360,7 +2566,13 @@
                 if (stored) {
                     schedulePersist();
                     if (isVisible && batch[0].gen === generation) {
-                        renderMode(batch.map(b => b.el));
+                        renderMode(batch.map(b => b.el).filter(isVisibleCurrentReaderElement));
+                        // Inline text can shrink and expose another source
+                        // paragraph without an EPUB relocated event. Rebuild
+                        // only the current visible queue; do not reset the
+                        // generation or disturb a genuine navigation.
+                        if (translationMode !== 'off' && readerRouteActive
+                                && !destinationContentPending()) translateCurrentPage();
                     }
                 }
             }
@@ -2446,6 +2658,15 @@
         pumpQueue();
     }
 
+    function isCurrentReaderElement(el) {
+        const root = getReaderRoot();
+        return !!(el && el.isConnected && root && root.contains(el));
+    }
+
+    function isVisibleCurrentReaderElement(el) {
+        return isCurrentReaderElement(el) && getVisibleParagraphs().includes(el);
+    }
+
     function triggerPrefetch() {
         if (!prefetchEnabled || translationMode === 'off') return;
         pumpQueue();
@@ -2521,7 +2742,7 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
             // Idempotent: update the existing direct-child translation instead of duplicating.
             let transEl = el.querySelector(':scope > .bt-translation');
             if (transEl) {
-                transEl.textContent = translated;
+                if (transEl.textContent !== translated) transEl.textContent = translated;
             } else {
                 const heading = isHeading(el);
                 transEl = el.ownerDocument.createElement(heading ? 'div' : 'span');
@@ -2620,6 +2841,8 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
                 originalContent.set(el, fragment);
             }
             // Remove any bilingual/loading/feedback spans before replacing the text.
+            if (el.dataset.originalText && el.textContent === translated
+                    && !el.querySelector('.bt-translation, .bt-loading, .bt-feedback')) return;
             el.querySelectorAll('.bt-translation, .bt-loading, .bt-feedback').forEach(n => n.remove());
             el.textContent = translated;
         });
@@ -2652,8 +2875,8 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         const target = mutation.target && mutation.target.nodeType === 1
             ? mutation.target
             : mutation.target && mutation.target.parentElement;
-        if (target && target.closest
-                && target.closest('#bt-bar, #bt-menu, #bt-toast, [data-original-text]')) {
+        if (target && (isBtNode(target) || (target.closest
+                && target.closest('#bt-bar, #bt-menu, #bt-toast, [data-original-text]')))) {
             return false;
         }
         const changedNodes = Array.from(mutation.addedNodes)
@@ -2661,6 +2884,17 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         // Character-data edits have no nodes but still change book content.
         if (changedNodes.length === 0) return true;
         return changedNodes.some(node => !isBtNode(node));
+    }
+
+    function invalidateMutationTextCache(mutations) {
+        // Source edits can reuse the same paragraph element. Its text cache
+        // must therefore be discarded even though the paragraph list itself
+        // still has the same identity. Plugin-owned nodes never reach here.
+        paragraphTextCache = new WeakMap();
+        // A previously short/empty source node can become a paragraph through
+        // characterData alone. Always re-run candidate discovery for a real
+        // book mutation; plugin mutations are filtered before this function.
+        invalidateParagraphsCache();
     }
 
     let translateTimeout = null;
@@ -2796,7 +3030,7 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         readerObserver = null;
     }
 
-    function attachReaderContentObserver({ rediscover = false } = {}) {
+    function attachReaderContentObserver({ rediscover = false, deferTranslation = false } = {}) {
         let content = null;
         if (READER_TYPE === 'kavita') {
             content = getReaderRoot();
@@ -2827,8 +3061,9 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         invalidateParagraphsCache();
         disconnectReaderContentObserver();
         readerObserver = new MutationObserver((mutations) => {
-            if (!readerRouteActive
-                    || !mutations.some(mutationContainsReaderContent)) return;
+            const relevant = readerRouteActive && mutations.filter(mutationContainsReaderContent);
+            if (!relevant || relevant.length === 0) return;
+            invalidateMutationTextCache(relevant);
             // Annotation/lazy-loader mutations can occur in A after the URL
             // switches to B. For a reused root, wait until all captured A
             // paragraphs have left it; arbitrary DOM activity is not proof
@@ -2849,8 +3084,8 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
             applyIframeTheme(idoc);
             attachIframeShortcut(idoc);
         }
-        readerObserver.observe(content, { childList: true, subtree: true });
-        if (rediscover && translationMode !== 'off') {
+        readerObserver.observe(content, { childList: true, characterData: true, subtree: true });
+        if (rediscover && !deferTranslation && translationMode !== 'off') {
             scheduleTranslate('new_reader_content', {
                 immediate: true,
                 // First attachment may race with work discovered by the main
@@ -2886,6 +3121,7 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         // Track CWA iframe documents and Kavita's stable .book-content host.
         setInterval(() => {
             if (!syncReaderRoute()) return;
+            if (READER_TYPE === 'cwa') attachEpubHooks();
             if (translationMode === 'off') {
                 // A delayed EPUB iframe still needs Alt+T, without observing
                 // chapter mutations or scanning paragraphs while OFF.
@@ -2923,23 +3159,25 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
             // second line of defense against any other transient layout blip.
             // Check for page turns even while prefetching in background!
             // Background prefetch does not shift visible layout.
-            if (!isTranslating && !isPrefetching) {
-                const visible = getVisibleParagraphs();
-                if (visible.length > 0) {
-                    const firstText = getParagraphText(visible[0]);
-                    if (firstText) {
-                        const hash = hashText(firstText);
-                        if (hash !== lastFirstVisibleHash) {
-                            if (hash === pendingFirstVisibleHash) {
-                                // Seen on the previous poll too — confirmed, not a blip.
-                                lastFirstVisibleHash = hash;
-                                pendingFirstVisibleHash = null;
-                                scheduleTranslate('page_turn', { immediate: true, forceRediscover: true });
+            if (!epubRenditionHooksActive) {
+                if (!isTranslating && !isPrefetching) {
+                    const visible = getVisibleParagraphs();
+                    if (visible.length > 0) {
+                        const firstText = getParagraphText(visible[0]);
+                        if (firstText) {
+                            const hash = hashText(firstText);
+                            if (hash !== lastFirstVisibleHash) {
+                                if (hash === pendingFirstVisibleHash) {
+                                    // Seen on the previous poll too — confirmed, not a blip.
+                                    lastFirstVisibleHash = hash;
+                                    pendingFirstVisibleHash = null;
+                                    scheduleTranslate('page_turn', { immediate: true, forceRediscover: true });
+                                } else {
+                                    pendingFirstVisibleHash = hash;
+                                }
                             } else {
-                                pendingFirstVisibleHash = hash;
+                                pendingFirstVisibleHash = null;
                             }
-                        } else {
-                            pendingFirstVisibleHash = null;
                         }
                     }
                 }
@@ -2947,17 +3185,96 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         }, 350);
     }
 
+    let hookedEpubRendition = null;
+    let epubRenditionHooksActive = false;
+    let lastEpubLocationIdentity = null;
+    let epubHookRetryTimer = null;
+    let pendingAnchorRelocation = null;
+
+    function epubLocationIdentity(location) {
+        const start = location && location.start;
+        if (!start) return null;
+        return start.cfi || start.href || start.index || null;
+    }
+
     function attachEpubHooks() {
         if (READER_TYPE !== 'cwa') return;
-        if (window.reader && window.reader.rendition) {
-            window.reader.rendition.on('relocated', () => {
+        const rendition = window.reader && window.reader.rendition;
+        if (rendition) {
+            if (hookedEpubRendition === rendition) return;
+            hookedEpubRendition = rendition;
+            epubRenditionHooksActive = typeof rendition.on === 'function';
+            lastEpubLocationIdentity = epubLocationIdentity(
+                rendition.currentLocation && rendition.currentLocation()
+            );
+            if (!epubRenditionHooksActive) return;
+            rendition.on('relocated', (location) => {
+                if (hookedEpubRendition !== rendition) return;
+                const identity = epubLocationIdentity(location)
+                    || epubLocationIdentity(rendition.currentLocation && rendition.currentLocation());
+                const token = pendingAnchorRelocation;
+                pendingAnchorRelocation = null;
+                const tokenIframe = token && getReaderIframe();
+                const tokenFragments = tokenIframe
+                    ? cwaProjectedFragments(token.element, tokenIframe) : [];
+                const tokenFragment = tokenFragments[Math.min(token && token.fragmentIndex || 0,
+                    tokenFragments.length - 1)];
+                if (token && token.expiresAt >= Date.now()
+                        && token.rendition === rendition && token.generation === generation
+                        && token.root === getReaderRoot() && token.element.isConnected
+                        && token.root.contains(token.element)
+                        && token.scroller.scrollLeft === token.scrollLeft
+                        && token.scroller.scrollTop === token.scrollTop
+                        && tokenFragment && tokenFragment.left === token.fragmentLeft
+                        && tokenFragment.top === token.fragmentTop) {
+                    lastEpubLocationIdentity = identity;
+                    return;
+                }
+                if (identity !== null && identity === lastEpubLocationIdentity) return;
+                lastEpubLocationIdentity = identity;
+                // A changed CFI is the reader's authoritative page movement.
+                // It is safe to abort stale work; duplicate relocated events are not.
                 scheduleTranslate('epub_relocated', { immediate: true, forceRediscover: true });
             });
-            window.reader.rendition.on('rendered', () => {
-                scheduleTranslate('epub_rendered', { immediate: true, forceRediscover: true });
+            rendition.on('rendered', () => {
+                if (hookedEpubRendition !== rendition) return;
+                const identity = epubLocationIdentity(
+                    rendition.currentLocation && rendition.currentLocation()
+                );
+                if (!readerRouteActive || translationMode === 'off') {
+                    if (identity !== null) lastEpubLocationIdentity = identity;
+                    return;
+                }
+                // EPUB.js can emit rendered repeatedly for the same page. Rebind
+                // a replacement document, then wait for relocated's authoritative
+                // CFI before translating it under a chapter scope. This avoids a
+                // next document being sent with the previous chapter identity.
+                const attached = attachReaderContentObserver({
+                    rediscover: true, deferTranslation: true
+                });
+                if (attached && identity !== null && identity === lastEpubLocationIdentity) {
+                    // A view/body replacement for the same verified location
+                    // has no following relocated event in some EPUB.js builds.
+                    // It is a real document change, so cancel old work and
+                    // reconcile immediately under the already-verified scope.
+                    scheduleTranslate('epub_rendered_same_location', {
+                        immediate: true, forceRediscover: true
+                    });
+                } else if (!attached && identity === null) {
+                    // Some EPUB.js builds omit a location payload for a
+                    // layout-only rendered event. Reconcile it without a
+                    // generation reset; queue/cache de-duplication keeps a
+                    // repeated event from replaying an admitted request.
+                    invalidateParagraphsCache();
+                    scheduleTranslate('epub_rendered', { immediate: true });
+                }
             });
         } else {
-            setTimeout(attachEpubHooks, 1000);
+            hookedEpubRendition = null;
+            epubRenditionHooksActive = false;
+            lastEpubLocationIdentity = null;
+            clearTimeout(epubHookRetryTimer);
+            epubHookRetryTimer = setTimeout(attachEpubHooks, 1000);
         }
     }
 
@@ -2974,6 +3291,7 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
 
     function onNavKeydown(e) {
         if (translationMode === 'off' || !readerRouteActive) return;
+        if (READER_TYPE === 'cwa' && epubRenditionHooksActive) return;
         const navKeys = ['ArrowRight', 'ArrowLeft', 'PageDown', 'PageUp', ' '];
         if (navKeys.includes(e.key) && !e.altKey && !e.ctrlKey && !e.metaKey) {
             setTimeout(() => {

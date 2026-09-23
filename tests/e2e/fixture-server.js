@@ -140,6 +140,19 @@ const server = http.createServer((request, response) => {
         </body></html>`);
         return;
     }
+    if (url.pathname === '/chapter/wide') {
+        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end(`<!doctype html><html lang="en"><head><style>
+          html,body{margin:0;width:2400px;height:280px;overflow:hidden}
+          main{column-width:560px;column-gap:40px;column-fill:auto;height:280px}
+          p{margin:0;height:240px;break-after:column}
+        </style></head><body><main>
+          <p id="wide-visible">The first rendered EPUB column is visible.</p>
+          <p id="wide-offscreen-one">The second EPUB column stays outside the clipped viewer.</p>
+          <p id="wide-offscreen-two">The third EPUB column stays outside the clipped viewer.</p>
+        </main></body></html>`);
+        return;
+    }
     if (url.pathname === '/read/42') {
         response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         response.end(`<!doctype html><html lang="en"><head>
@@ -168,6 +181,60 @@ const server = http.createServer((request, response) => {
             }, 50);
           </script>
         </body></html>`);
+        return;
+    }
+    if (url.pathname === '/read/wide') {
+        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end(`<!doctype html><html lang="en"><head>
+          <meta charset="utf-8"><title>Wide EPUB viewport fixture</title>
+          <script src="/bt-static/loader.js?v=e2e"></script>
+          <style>#viewer{width:600px;height:280px;overflow:hidden}#viewer iframe{width:2400px;height:280px;border:0}</style>
+        </head><body><main><div id="viewer"><iframe title="Book chapter" src="/chapter/wide"></iframe></div></main></body></html>`);
+        return;
+    }
+    if (url.pathname === '/chapter/reflow') {
+        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        const prose = 'A traveller records the changing colours of the garden. Each evening offers time to reflect on the journey. ';
+        response.end(`<!doctype html><html lang="en"><head><style>
+          body{margin:0;font:18px/1.5 serif}p{margin:0 0 16px}
+        </style></head><body>${Array.from({ length: 20 }, (_, i) =>
+            `<p id="source-${i}">Paragraph ${i}. ${prose.repeat(2)}</p>`).join('')}</body></html>`);
+        return;
+    }
+    if (url.pathname === '/read/reflow') {
+        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+          <title>Reader reflow event fixture</title><style>
+          #viewer{width:500px;height:220px}.epub-container{width:500px;height:220px;overflow:auto}
+          iframe{width:480px;height:5000px;border:0}
+          </style></head><body>
+          <button id="next-page">Next page</button>
+          <button id="jump-page">Jump ahead</button>
+          <div id="viewer"><div class="epub-container"><iframe title="Book chapter" src="/chapter/reflow"></iframe></div></div>
+          <script>
+          const scroller=document.querySelector('.epub-container');
+          const handlers={};
+          window.reader={rendition:{
+            on:(name,fn)=>(handlers[name] ||= []).push(fn),
+            currentLocation:()=>({start:{href:'synthetic.xhtml',cfi:'epubcfi(/fixture/'+scroller.scrollTop+')'}})
+          }};
+          let relocationTimer;
+          scroller.addEventListener('scroll',()=>{
+            clearTimeout(relocationTimer);
+            relocationTimer=setTimeout(()=>{
+              for(const fn of handlers.relocated || []) fn(window.reader.rendition.currentLocation());
+            },100);
+          });
+          document.querySelector('#next-page').onclick=()=>{
+            const paragraphs=Array.from(document.querySelector('iframe').contentDocument.querySelectorAll('p'));
+            const next=paragraphs.find(el=>el.offsetTop>scroller.scrollTop+1);
+            if(next) scroller.scrollTop=next.offsetTop;
+          };
+          document.querySelector('#jump-page').onclick=()=>{
+            scroller.scrollTop=document.querySelector('iframe').contentDocument.querySelector('#source-8').offsetTop;
+          };
+          </script><script src="/bt-static/loader.js?v=e2e"></script>
+          </body></html>`);
         return;
     }
     if (url.pathname === '/library/7/series/42/book/99') {

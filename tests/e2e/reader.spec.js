@@ -282,6 +282,32 @@ test('attaching the reader observer does not cancel or duplicate active translat
     expect(failures).toEqual([]);
 });
 
+test('CWA admits only paragraphs intersecting the clipped multi-column viewport', async ({ page }) => {
+    const failures = observeBrowserFailures(page);
+    const payloads = [];
+    await page.route('**/bt-api/translate/batch', async route => {
+        const payload = route.request().postDataJSON();
+        payloads.push(payload);
+        await route.fulfill({
+            status: 200, contentType: 'application/json',
+            body: JSON.stringify({ translations: payload.paragraphs.map(text => `ES: ${text}`) }),
+        });
+    });
+
+    await page.goto('/read/wide');
+    await page.locator('#bt-toggle').click();
+    const chapter = page.frameLocator('iframe[title="Book chapter"]');
+    await expect(chapter.locator('#wide-visible .bt-translation')).toHaveText(
+        'ES: The first rendered EPUB column is visible.'
+    );
+    await page.waitForTimeout(250);
+    expect(payloads.flatMap(payload => payload.paragraphs)).toEqual([
+        'The first rendered EPUB column is visible.',
+    ]);
+    await expect(chapter.locator('#wide-offscreen-one .bt-translation')).toHaveCount(0);
+    expect(failures).toEqual([]);
+});
+
 test('route re-entry attaches its observer before starting translation work', async ({ page }) => {
     const failures = observeBrowserFailures(page);
     const payloads = [];
