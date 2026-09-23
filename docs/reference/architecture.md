@@ -127,7 +127,10 @@ cannot detach an active API container from its bind source.
   first-paragraph output, and schedules bounded forward lookahead. Provider,
   model, network and cache state determine observed latency. Only explicit
   pre-provider admission `429`s are replayed automatically.
-- **Client Cache**: Uses in-memory state and `localStorage` preferences.
+- **Client Cache**: Uses in-memory state and `localStorage` language, style, and
+  toolbar-position preferences. Translation mode resets to OFF on every book
+  entry and page reload, including when older mode preferences remain in
+  browser storage.
   Optional browser persistence is enabled only by the server-owned browser
   contract and may be constrained by browser storage. Keys include release,
   languages, book, chapter, and stable DOM position so repeated text in

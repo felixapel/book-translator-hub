@@ -42,12 +42,11 @@
         ? cfg.apiUrl
         : (window.location.protocol === 'https:' ? null : `http://${window.location.hostname}:8390`);
     // ── Per-book preferences (additive) ──────────────────────────────
-    // Mode and languages are remembered per book. Capture legacy global
-    // values once as defaults: reading them again after another book writes
-    // its preference would otherwise leak A's settings into B during SPA
-    // navigation.
+    // Languages are remembered per book. Translation mode is deliberately
+    // session-only: a new reader entry must not inherit another account's
+    // enabled mode from origin-wide browser storage.
     const legacyPreferenceDefaults = {};
-    ['bt_mode', 'bt_lang', 'bt_source_lang'].forEach((name) => {
+    ['bt_lang', 'bt_source_lang'].forEach((name) => {
         try { legacyPreferenceDefaults[name] = localStorage.getItem(name); }
         catch (e) { legacyPreferenceDefaults[name] = null; }
     });
@@ -123,7 +122,7 @@
     const BT_CLIENT_MAX_RATE_LIMIT_RESPONSES = 3;
     const BT_CLIENT_MAX_RETRY_AFTER_SECONDS = 60;
 
-    let translationMode = bookPrefGet('bt_mode') || 'off'; // 'off', 'bilingual', 'translated'
+    let translationMode = 'off'; // 'off', 'bilingual', 'translated'
     let activePreferenceScope = bookScopeId();
     let isTranslating = false;
     let isPrefetching = false;
@@ -774,15 +773,14 @@
         SOURCE_LANG = resolveEffectiveSourceLang(null);
         TARGET_LANG = bookPrefGet('bt_lang') || cfg.targetLang || defaultLang;
         if (!availableLangCodes.has(TARGET_LANG)) TARGET_LANG = defaultLang;
-        translationMode = bookPrefGet('bt_mode') || 'off';
+        translationMode = 'off';
         newGeneration();
         translatedParagraphs = loadCacheForLang(TARGET_LANG);
         glossaryEntries = [];
         glossaryLoading = false;
         glossaryLoadedBook = null;
-        // Keep the old reader DOM untouched until the destination content is
-        // observed. Clearing translated inline content here would itself look
-        // like a same-node book replacement to the observer.
+        // The old paragraph identities remain the destination gate after
+        // syncReaderRoute disconnects the observer and restores their text.
         awaitingDestinationContent = true;
         destinationContentPollUntil = Date.now() + DESTINATION_CONTENT_POLL_WINDOW_MS;
         return true;
@@ -816,11 +814,10 @@
 
     // ── UI Components ──────────────────────────────────────────────────
     function setMode(mode, { silent = false } = {}) {
+        if (mode !== 'off' && !readerRouteActive) return;
         const prevMode = translationMode;
         if (mode === prevMode) return;
         translationMode = mode;
-        localStorage.setItem('bt_mode', mode);
-        bookPrefRemember('bt_mode', mode);
 
         const bar = document.getElementById('bt-bar');
         if (bar) bar.dataset.mode = mode;
@@ -829,11 +826,13 @@
             : mode === 'translated' ? t.translated : t.off;
 
         if (mode === 'off') {
+            disconnectReaderContentObserver();
             newGeneration();              // cancel in-flight work; next ON starts clean
             removeAllTranslations();
             refreshStatus();
             if (!silent) showToast(t.off);
         } else if (prevMode === 'off') {
+            attachReaderContentObserver();
             translateCurrentPage();       // fresh start
         } else {
             // bilingual <-> translated: re-render from cache instantly, keep filling gaps
@@ -2414,28 +2413,27 @@
 
         visibleQueue = collectUncached(visibleEls).map(x => ({...x, gen: myGen}));
         
-        const allParagraphs = getParagraphs();
-        const visibleSet = new Set(visibleEls);
-
-        // Directional Lookahead: find the boundary of visible elements in the full chapter
-        let lastVisibleIdx = -1;
-        for (let i = allParagraphs.length - 1; i >= 0; i--) {
-            if (visibleSet.has(allParagraphs[i])) {
-                lastVisibleIdx = i;
-                break;
+        prefetchQueue = [];
+        if (prefetchEnabled) {
+            const allParagraphs = getParagraphs();
+            const visibleSet = new Set(visibleEls);
+            // Find the last visible paragraph, then inspect only the bounded
+            // forward window instead of filtering the rest of a long chapter.
+            let lastVisibleIdx = -1;
+            for (let i = allParagraphs.length - 1; i >= 0; i--) {
+                if (visibleSet.has(allParagraphs[i])) {
+                    lastVisibleIdx = i;
+                    break;
+                }
             }
+            const maxAhead = boundedInteger(cfg.maxPrefetchParagraphs, 1, 50, 8);
+            const forwardSlice = [];
+            for (let i = lastVisibleIdx + 1;
+                    i < allParagraphs.length && forwardSlice.length < maxAhead; i++) {
+                if (!visibleSet.has(allParagraphs[i])) forwardSlice.push(allParagraphs[i]);
+            }
+            prefetchQueue = collectUncached(forwardSlice).map(x => ({...x, gen: myGen}));
         }
-
-        // Priority 1: Forward paragraphs (the next pages ahead in reading order)
-        const forwardEls = (lastVisibleIdx >= 0)
-            ? allParagraphs.slice(lastVisibleIdx + 1).filter(el => !visibleSet.has(el))
-            : allParagraphs.filter(el => !visibleSet.has(el));
-
-        // Combined prefetch queue: bounded forward lookahead only (max 8 paragraphs ahead)
-        const MAX_PREFETCH_AHEAD = boundedInteger(cfg.maxPrefetchParagraphs, 1, 50, 8);
-        const forwardSlice = forwardEls.slice(0, MAX_PREFETCH_AHEAD);
-        const prefetchEls = prefetchEnabled ? forwardSlice : [];
-        prefetchQueue = collectUncached(prefetchEls).map(x => ({...x, gen: myGen}));
         // No snapshot total here: refreshStatus derives done/total live from
         // chapterDone + inflight + queues (see chapterProgress), so re-triggers
         // on page turns / iframe mutations can only ADD newly-discovered work.
@@ -2710,14 +2708,27 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
             if (wasActive) {
                 readerRouteActive = false;
                 clearTimeout(translateTimeout);
+                translationMode = 'off';
+                disconnectReaderContentObserver();
                 newGeneration();
                 removeAllTranslations();
+                refreshBookPreferenceUI();
             }
             setOverlayHidden(true);
             return false;
         }
 
+        if (wasActive && activePreferenceScope === bookScopeId()
+                && document.getElementById('bt-bar')) return true;
+
         const preferencesChanged = restoreBookPreferences();
+        if (preferencesChanged) {
+            disconnectReaderContentObserver();
+            // The old reader can remain mounted after the URL changes. Keep
+            // its nodes for the destination gate, but restore their original
+            // text before leaving the prior book.
+            removeAllTranslations();
+        }
         readerRouteActive = true;
         createFloatingUI();
         applyBarPosition();
@@ -2762,10 +2773,27 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         if (!iframe || watchedReaderIframes.has(iframe)) return;
         watchedReaderIframes.add(iframe);
         iframe.addEventListener('load', () => {
-            if (readerRouteActive) {
+            if (!readerRouteActive) return;
+            ensureIframeShortcut();
+            if (translationMode !== 'off') {
                 attachReaderContentObserver({ rediscover: true });
             }
         });
+    }
+
+    function ensureIframeShortcut() {
+        if (READER_TYPE !== 'cwa') return;
+        const iframe = getReaderIframe();
+        watchReaderIframe(iframe);
+        try {
+            const idoc = iframe && (iframe.contentDocument || iframe.contentWindow.document);
+            attachIframeShortcut(idoc);
+        } catch (e) { /* cross-origin — ignore */ }
+    }
+
+    function disconnectReaderContentObserver() {
+        if (readerObserver) readerObserver.disconnect();
+        readerObserver = null;
     }
 
     function attachReaderContentObserver({ rediscover = false } = {}) {
@@ -2782,13 +2810,22 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
                 content = idoc && idoc.body;
             } catch (e) { content = null; }
         }
-        if (!content || content === lastContentIdentity) return false;
+        if (!content || (content === lastContentIdentity && readerObserver)) return false;
 
-        const replacesObservedContent = lastContentIdentity !== null;
+        const replacesObservedContent = lastContentIdentity !== null
+            && content !== lastContentIdentity;
         lastContentIdentity = content;
-        if (replacesObservedContent) confirmDestinationContent();
+        if (awaitingDestinationContent
+                && !destinationPreviousParagraphs.some(node => content.contains(node))
+                && getTranslatableElements(content).length > 0) {
+            // The destination may have filled a reused root while OFF, when
+            // no observer event was available. Kavita exposes no book identity
+            // on that root: if the old snapshot was empty, meaningful content
+            // is the best available signal; captured old nodes always block it.
+            confirmDestinationContent();
+        }
         invalidateParagraphsCache();
-        if (readerObserver) readerObserver.disconnect();
+        disconnectReaderContentObserver();
         readerObserver = new MutationObserver((mutations) => {
             if (!readerRouteActive
                     || !mutations.some(mutationContainsReaderContent)) return;
@@ -2797,7 +2834,8 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
             // paragraphs have left it; arbitrary DOM activity is not proof
             // that the destination has arrived.
             if (awaitingDestinationContent
-                    && destinationPreviousParagraphs.some(node => content.contains(node))) return;
+                    && (destinationPreviousParagraphs.some(node => content.contains(node))
+                        || getTranslatableElements(content).length === 0)) return;
             confirmDestinationContent();
             scheduleTranslate(
                 READER_TYPE === 'kavita'
@@ -2827,7 +2865,7 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
     function setupObservers() {
         if (!mainObserver) {
             mainObserver = new MutationObserver((mutations) => {
-                if (!readerRouteActive) return;
+                if (!readerRouteActive || translationMode === 'off') return;
                 const relevant = mutations.some(mutationContainsReaderContent);
                 if (relevant) {
                     // Reconcile the reader root before it can admit work. The
@@ -2843,11 +2881,17 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         // so the first polling tick cannot mistake it for a chapter change and
         // abort already-admitted provider work. The poll remains as a fallback
         // for readers that replace or create their content asynchronously.
-        attachReaderContentObserver();
+        if (translationMode !== 'off') attachReaderContentObserver();
 
         // Track CWA iframe documents and Kavita's stable .book-content host.
         setInterval(() => {
             if (!syncReaderRoute()) return;
+            if (translationMode === 'off') {
+                // A delayed EPUB iframe still needs Alt+T, without observing
+                // chapter mutations or scanning paragraphs while OFF.
+                ensureIframeShortcut();
+                return;
+            }
             if (destinationContentPending() && !destinationContentPollActive()) {
                 // A route update without replacement must not keep polling or
                 // translate stale content. Existing observers still release
@@ -2855,8 +2899,6 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
                 return;
             }
             attachReaderContentObserver({ rediscover: true });
-            if (translationMode === 'off') return;
-
             // Position-based page turn detector.
             // BUG (root cause of the status bar flicker): inserting a bilingual
             // translation block under a paragraph increases that paragraph's
@@ -2975,7 +3017,11 @@ html[data-bt-theme="sepia"]{--bt-translation-color:#6d4c41;--bt-translation-bord
         setupObservers();
         attachEpubHooks();
         setupKeyboardShortcut();
+        ensureIframeShortcut();
         window.addEventListener('bt:reader-route', () => syncReaderRoute());
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted) setMode('off', { silent: true });
+        });
         // Persist any pending translations if the user closes/reloads the tab.
         // pagehide covers mobile Safari and bfcache navigations where
         // beforeunload does not fire; persistCacheNow is idempotent.

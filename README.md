@@ -32,6 +32,7 @@
 - **Layered cache:** Uses an in-memory reading cache and a private SQLite cache. Optional browser persistence is controlled by the server-owned reader configuration and may be unavailable when browser storage is constrained.
 - **SQLite WAL configuration:** Uses WAL, bounded busy timeouts, a memory-mapped I/O window and page cache settings. Operators should measure cache behavior on their own storage and workload.
 - **Language and reading controls:** Detects source language from reader metadata/HTML with a manual override, plus a target-language selector on the floating toolbar.
+- **Manual activation:** Each book entry and page reload starts with translation OFF, even if this browser previously translated the book. Book text is sent for translation only after the reader turns the mode on.
 - **E-Ink display mode:** Provides a high-contrast, low-motion presentation intended for compatible e-readers; verify it on the target browser and device.
 - **Versioned reader connectors:** Integrates with stock [Calibre-Web-Automated](https://github.com/crocodilestick/Calibre-Web-Automated) and exact Kavita EPUB contracts without modifying upstream images. See the compatibility matrix for acceptance limits.
 - **Server-side provider credentials:** Managed configurations keep API keys in the private server environment. Browser configuration omits provider keys; operators must protect their environment files and proxy boundary.

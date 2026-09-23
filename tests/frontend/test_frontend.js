@@ -142,6 +142,21 @@ async function wait(ms) {
     return new Promise(r => setTimeout(r, ms));
 }
 
+async function activateReader(win, mode = 'bilingual') {
+    const deadline = Date.now() + 2000;
+    let bar = win.document.getElementById('bt-bar');
+    while (!bar && Date.now() < deadline) {
+        await wait(10);
+        bar = win.document.getElementById('bt-bar');
+    }
+    assert(bar, 'The reader toolbar must be ready before manual activation');
+    const toggle = win.document.getElementById('bt-toggle');
+    for (let attempt = 0; bar.dataset.mode !== mode && attempt < 3; attempt++) {
+        toggle.click();
+    }
+    assert.strictEqual(bar.dataset.mode, mode, `Could not activate ${mode} mode`);
+}
+
 async function captureAuthTransport(config, enableCloudFallback = false) {
     const authDom = new JSDOM(`
 <!DOCTYPE html><html><body><div id="viewer"><iframe></iframe></div></body></html>
@@ -194,6 +209,8 @@ async function captureAuthTransport(config, enableCloudFallback = false) {
         assert(toggle, 'Cloud fallback must have an explicit reader control');
         toggle.click();
         authDom.window.document.getElementById('bt-toggle').click();
+    } else {
+        await activateReader(authDom.window);
     }
     const deadline = Date.now() + 2000;
     while (!captured && Date.now() < deadline) await wait(20);
@@ -321,6 +338,7 @@ async function assertStalePolicyIsRefetchedWithoutTranslationReplay() {
     const script = staleDom.window.document.createElement('script');
     script.textContent = code;
     staleDom.window.document.body.appendChild(script);
+    await activateReader(staleDom.window);
     const deadline = Date.now() + 2000;
     while ((policyCalls < 2 || translationCalls < 1)
             && Date.now() < deadline) await wait(20);
@@ -389,6 +407,7 @@ async function assertAmbiguous429IsTerminal() {
     const script = retryDom.window.document.createElement('script');
     script.textContent = code;
     retryDom.window.document.body.appendChild(script);
+    await activateReader(retryDom.window);
     await wait(1300);
 
     assert.strictEqual(translationCalls, 1,
@@ -446,6 +465,7 @@ async function assertConfiguredBatchSizeIsUsed() {
     const script = batchDom.window.document.createElement('script');
     script.textContent = code;
     batchDom.window.document.body.appendChild(script);
+    await activateReader(batchDom.window);
     const deadline = Date.now() + 2000;
     while (batchLengths.reduce((sum, count) => sum + count, 0) < 5
             && Date.now() < deadline) await wait(20);
@@ -498,6 +518,7 @@ async function assertSafe429RetryBoundSurvivesRediscovery() {
     const script = retryDom.window.document.createElement('script');
     script.textContent = code;
     retryDom.window.document.body.appendChild(script);
+    await activateReader(retryDom.window);
 
     // Rediscover the same paragraph during each admission wait. Queue objects
     // are transient; the retry budget must remain stable for this generation.
@@ -570,6 +591,7 @@ async function assertVisibleWorkInterruptsPrefetchDelay() {
     const script = pacingDom.window.document.createElement('script');
     script.textContent = code;
     pacingDom.window.document.body.appendChild(script);
+    await activateReader(pacingDom.window);
     let deadline = Date.now() + 1000;
     while ((calls.length < 1 || !renderedHook) && Date.now() < deadline) {
         await wait(10);
@@ -662,6 +684,7 @@ async function assertFeedbackControls() {
     const script = fbDom.window.document.createElement('script');
     script.textContent = code;
     fbDom.window.document.body.appendChild(script);
+    await activateReader(fbDom.window);
     let deadline = Date.now() + 3000;
     while (!first.querySelector('.bt-translation')
             && Date.now() < deadline) await wait(20);
@@ -767,6 +790,7 @@ async function assertOfflineResilience() {
     const script = offDom.window.document.createElement('script');
     script.textContent = code;
     offDom.window.document.body.appendChild(script);
+    await activateReader(offDom.window);
     await wait(400);
     assert.strictEqual(translationFetches, 0,
         'No translation fetch may issue while offline');
@@ -1072,8 +1096,10 @@ async function assertKavitaReaderAdapterContract() {
     const script = kavitaDom.window.document.createElement('script');
     script.textContent = code;
     kavitaDom.window.document.body.appendChild(script);
+    await activateReader(kavitaDom.window);
     let deadline = Date.now() + 2000;
     while (payloads.length === 0 && Date.now() < deadline) await wait(20);
+    while (!first.querySelector('.bt-translation') && Date.now() < deadline) await wait(20);
 
     assert.strictEqual(payloads[0].book_id, '7:42');
     assert.strictEqual(payloads[0].chapter_id, '99');
@@ -1136,6 +1162,7 @@ async function assertReaderSafetyAndLanguageResolution() {
     const shellScript = shellDom.window.document.createElement('script');
     shellScript.textContent = code;
     shellDom.window.document.body.appendChild(shellScript);
+    await activateReader(shellDom.window);
     await wait(120);
     assert.strictEqual(shellRequests, 0,
         'CWA must wait for a readable EPUB iframe instead of translating host-page text');
@@ -1177,6 +1204,7 @@ async function assertReaderSafetyAndLanguageResolution() {
         const script = kavitaDom.window.document.createElement('script');
         script.textContent = code;
         kavitaDom.window.document.body.appendChild(script);
+        await activateReader(kavitaDom.window);
         await wait(160);
         return { kavitaDom, payloads };
     }
@@ -1208,7 +1236,9 @@ async function assertBookPreferencesFollowSpaNavigation() {
         readerType: 'kavita', readerVersion: '0.9.0.2',
         readerContractVersion: 'kavita-0.9.0.2-epub-v1'
     };
-    navDom.window.localStorage.setItem('bt_mode', 'off');
+    navDom.window.localStorage.setItem('bt_mode', 'translated');
+    navDom.window.localStorage.setItem('bt_book_7:42:99_bt_mode', 'bilingual');
+    navDom.window.localStorage.setItem('bt_book_7:42:100_bt_mode', 'translated');
     navDom.window.localStorage.setItem('bt_lang', 'Spanish');
     navDom.window.localStorage.setItem('bt_prefetch', '0');
     navDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
@@ -1233,6 +1263,8 @@ async function assertBookPreferencesFollowSpaNavigation() {
     script.textContent = code;
     navDom.window.document.body.appendChild(script);
     await wait(30);
+    assert.strictEqual(navDom.window.document.getElementById('bt-bar').dataset.mode, 'off',
+        'A stored mode must never activate translation on reader entry');
 
     const target = navDom.window.document.getElementById('bt-lang');
     target.value = 'French';
@@ -1257,8 +1289,8 @@ async function assertBookPreferencesFollowSpaNavigation() {
     navDom.window.history.pushState({}, '', '/library/7/series/42/book/99');
     navDom.window.dispatchEvent(new navDom.window.CustomEvent('bt:reader-route'));
     await wait(30);
-    assert.strictEqual(navDom.window.document.getElementById('bt-toggle-label').textContent, 'Bilingual',
-        'Returning to Book A must restore its mode after A → B → A navigation');
+    assert.strictEqual(navDom.window.document.getElementById('bt-toggle-label').textContent, 'Original',
+        'Returning to Book A must still require explicit activation');
     assert.strictEqual(navDom.window.document.getElementById('bt-lang').value, 'French',
         'Returning to Book A must restore its target language');
     navDom.window.close();
@@ -1281,6 +1313,22 @@ async function assertSpaNavigationWaitsForDestinationContent() {
     navDom.window.localStorage.setItem('bt_book_7:42:100_bt_lang', 'German');
     navDom.window.localStorage.setItem('bt_prefetch', '0');
     navDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const NativeMutationObserver = navDom.window.MutationObserver;
+    let activeReaderObservers = 0;
+    navDom.window.MutationObserver = class extends NativeMutationObserver {
+        observe(target, options) {
+            if (target.classList?.contains('book-content')) {
+                this.observingReader = true;
+                activeReaderObservers++;
+            }
+            return super.observe(target, options);
+        }
+        disconnect() {
+            if (this.observingReader) activeReaderObservers--;
+            this.observingReader = false;
+            return super.disconnect();
+        }
+    };
     const visible = (element) => {
         element.getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
     };
@@ -1305,6 +1353,9 @@ async function assertSpaNavigationWaitsForDestinationContent() {
     const script = navDom.window.document.createElement('script');
     script.textContent = code;
     navDom.window.document.body.appendChild(script);
+    await activateReader(navDom.window);
+    assert.strictEqual(activeReaderObservers, 1,
+        'Manual activation must attach one reader content observer');
     let deadline = Date.now() + 1000;
     while (!payloads.some(payload => payload.paragraphs.includes('Book A must not be sent as Book B.'))
             && Date.now() < deadline) await wait(10);
@@ -1312,6 +1363,13 @@ async function assertSpaNavigationWaitsForDestinationContent() {
 
     navDom.window.history.pushState({}, '', '/library/7/series/42/book/100');
     navDom.window.dispatchEvent(new navDom.window.CustomEvent('bt:reader-route'));
+    assert.strictEqual(navDom.window.document.getElementById('bt-bar').dataset.mode, 'off',
+        'A new book must begin with translation off');
+    assert.strictEqual(activeReaderObservers, 0,
+        'The reader content observer must disconnect as soon as navigation turns translation off');
+    await activateReader(navDom.window);
+    assert.strictEqual(activeReaderObservers, 1,
+        'Manual activation must reattach the reader content observer');
     // Simulate the route update arriving before Angular replaces the current
     // .book-content node. This is the production race: B preferences are
     // active while A text remains mounted briefly.
@@ -1336,7 +1394,193 @@ async function assertSpaNavigationWaitsForDestinationContent() {
     'A same-node book-content replacement must release the destination translation exactly after new content arrives');
     assert(!payloads.some(payload => payload.paragraphs.includes('Book A must not be sent as Book B.')),
         'No request may label stale Book A text with Book B preferences');
+
+    // Reverse the route after B has rendered in translated mode. The old book
+    // remains mounted while the URL changes, and the destination replaces its
+    // content before the user enables translation again.
+    await activateReader(navDom.window, 'translated');
+    const bookB = navDom.window.document.getElementById('book-b');
+    assert.strictEqual(bookB.textContent, 'translated',
+        'The old book should be visibly translated before leaving it');
+    payloads.length = 0;
+    navDom.window.history.pushState({}, '', '/library/7/series/42/book/99');
+    navDom.window.dispatchEvent(new navDom.window.CustomEvent('bt:reader-route'));
+    assert.strictEqual(navDom.window.document.getElementById('bt-bar').dataset.mode, 'off');
+    assert.strictEqual(bookB.textContent, 'Book B content arrives later.',
+        'Navigating away must restore the old book text immediately, even before the next book renders');
+    assert.strictEqual(activeReaderObservers, 0,
+        'OFF must disconnect the content observer while waiting for the destination');
+
+    root.innerHTML = '<p id="book-a-return">Book A returns while translation is off.</p>';
+    visible(navDom.window.document.getElementById('book-a-return'));
+    await wait(450);
+    assert.strictEqual(payloads.length, 0,
+        'Replacing book content while OFF must not issue translation requests');
+    await activateReader(navDom.window);
+    assert.strictEqual(activeReaderObservers, 1,
+        'Manual reactivation must observe destination content');
+    deadline = Date.now() + 1000;
+    while (!payloads.some(payload => payload.paragraphs.includes('Book A returns while translation is off.'))
+            && Date.now() < deadline) await wait(10);
+    assert(payloads.some(payload => payload.target_lang === 'French'
+        && payload.paragraphs.includes('Book A returns while translation is off.')),
+    'Content replaced before activation must translate under the destination book preferences');
+    assert(!payloads.some(payload => payload.paragraphs.includes('Book B content arrives later.')),
+        'The previous book must never be requested under the destination scope');
+
+    await activateReader(navDom.window, 'off');
+    assert.strictEqual(activeReaderObservers, 0,
+        'Turning translation OFF must disconnect the reader observer');
+    payloads.length = 0;
+    navDom.window.history.pushState({}, '', '/library/7/series/42/book/100');
+    navDom.window.dispatchEvent(new navDom.window.CustomEvent('bt:reader-route'));
+    assert.strictEqual(navDom.window.document.getElementById('bt-bar').dataset.mode, 'off');
+    root.innerHTML = '<p id="book-b-early">Book B loads before manual activation.</p>';
+    visible(navDom.window.document.getElementById('book-b-early'));
+    await wait(450);
+    assert.strictEqual(payloads.length, 0,
+        'A OFF to B loaded before activation must remain network-idle');
+    await activateReader(navDom.window);
+    deadline = Date.now() + 1000;
+    while (!payloads.some(payload => payload.paragraphs.includes('Book B loads before manual activation.'))
+            && Date.now() < deadline) await wait(10);
+    assert(payloads.some(payload => payload.target_lang === 'German'
+        && payload.paragraphs.includes('Book B loads before manual activation.')),
+    'A OFF to B loaded before activation must translate B after the user enables it');
+    assert(!payloads.some(payload => payload.paragraphs.includes('Book A returns while translation is off.')),
+        'A text must not be sent under B preferences after OFF-route navigation');
+    await activateReader(navDom.window, 'off');
+    await wait(30);
     navDom.window.close();
+}
+
+async function assertEmptyPreviousBookCanActivateDestination() {
+    const navDom = new JSDOM(`<!DOCTYPE html><html><body>
+      <main><div class="book-content" data-bt-book-language="en"></div></main>
+    </body></html>`, {
+        url: 'https://kavita.example.test/library/7/series/42/book/99', runScripts: 'dangerously'
+    });
+    navDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api', authMode: 'reader_session', credentials: 'same-origin',
+        readerType: 'kavita', readerVersion: '0.9.0.2',
+        readerContractVersion: 'kavita-0.9.0.2-epub-v1'
+    };
+    navDom.window.localStorage.setItem('bt_prefetch', '0');
+    navDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const payloads = [];
+    navDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) {
+            return {
+                ok: true, status: 200,
+                json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+                headers: { get: () => null }
+            };
+        }
+        const payload = JSON.parse(options.body);
+        payloads.push(payload);
+        return {
+            ok: true, status: 200,
+            json: async () => ({ translations: payload.paragraphs.map(() => 'translated') }),
+            headers: { get: () => null }
+        };
+    };
+    const script = navDom.window.document.createElement('script');
+    script.textContent = code;
+    navDom.window.document.body.appendChild(script);
+    await wait(30);
+    navDom.window.history.pushState({}, '', '/library/7/series/42/book/100');
+    navDom.window.dispatchEvent(new navDom.window.CustomEvent('bt:reader-route'));
+    const root = navDom.window.document.querySelector('.book-content');
+    root.innerHTML = '<p>Book B arrives in the previously empty reader.</p>';
+    root.querySelector('p').getBoundingClientRect = () => ({ width: 100, height: 20, left: 0, top: 0 });
+    await wait(450);
+    assert.strictEqual(payloads.length, 0,
+        'An empty previous book must remain network-idle while the destination is OFF');
+    await activateReader(navDom.window);
+    const deadline = Date.now() + 1000;
+    while (!payloads.some(payload => payload.paragraphs.includes('Book B arrives in the previously empty reader.'))
+            && Date.now() < deadline) await wait(10);
+    assert(payloads.some(payload => payload.paragraphs.includes('Book B arrives in the previously empty reader.')),
+        'A destination loaded into a reused empty root must translate after manual activation');
+    await activateReader(navDom.window, 'off');
+    await wait(30);
+    navDom.window.close();
+}
+
+async function assertCwaIframeLoadStaysDisconnectedWhenOff() {
+    const cwaDom = new JSDOM(`<!DOCTYPE html><html><body>
+      <div id="viewer"><iframe></iframe></div>
+    </body></html>`, {
+        url: 'https://books.example.test/read/42/epub', runScripts: 'dangerously'
+    });
+    cwaDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api', authMode: 'cwa_session', credentials: 'same-origin',
+        readerType: 'cwa'
+    };
+    cwaDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    const iframe = cwaDom.window.document.querySelector('iframe');
+    iframe.contentDocument.body.innerHTML = '<p>Readable EPUB chapter text.</p>';
+    iframe.contentDocument.documentElement.lang = 'en';
+    const NativeMutationObserver = cwaDom.window.MutationObserver;
+    let activeReaderObservers = 0;
+    cwaDom.window.MutationObserver = class extends NativeMutationObserver {
+        observe(target, options) {
+            if (target === iframe.contentDocument.body) {
+                this.observingReader = true;
+                activeReaderObservers++;
+            }
+            return super.observe(target, options);
+        }
+        disconnect() {
+            if (this.observingReader) activeReaderObservers--;
+            this.observingReader = false;
+            return super.disconnect();
+        }
+    };
+    cwaDom.window.fetch = async (url, options) => {
+        if (String(url).endsWith('/provider-policy')) {
+            return {
+                ok: true, status: 200,
+                json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+                headers: { get: () => null }
+            };
+        }
+        const payload = JSON.parse(options.body);
+        return {
+            ok: true, status: 200,
+            json: async () => ({ translations: payload.paragraphs.map(() => 'translated') }),
+            headers: { get: () => null }
+        };
+    };
+    const script = cwaDom.window.document.createElement('script');
+    script.textContent = code;
+    cwaDom.window.document.body.appendChild(script);
+    let bar = cwaDom.window.document.getElementById('bt-bar');
+    const deadline = Date.now() + 2000;
+    while (!bar && Date.now() < deadline) {
+        await wait(10);
+        bar = cwaDom.window.document.getElementById('bt-bar');
+    }
+    assert(bar, 'CWA toolbar must be mounted before testing iframe keyboard access');
+    assert.strictEqual(bar.dataset.mode, 'off');
+    assert.strictEqual(activeReaderObservers, 0,
+        'CWA must not observe EPUB content before manual activation');
+    iframe.contentDocument.dispatchEvent(new cwaDom.window.KeyboardEvent('keydown', {
+        key: 't', altKey: true, bubbles: true, cancelable: true
+    }));
+    assert.strictEqual(bar.dataset.mode, 'bilingual',
+        'Alt+T inside the focused EPUB document must activate translation from default OFF');
+    assert.strictEqual(activeReaderObservers, 1,
+        'CWA keyboard activation must attach its iframe content observer');
+    await activateReader(cwaDom.window, 'off');
+    assert.strictEqual(activeReaderObservers, 0,
+        'CWA OFF must disconnect its iframe content observer');
+    iframe.dispatchEvent(new cwaDom.window.Event('load'));
+    await wait(20);
+    assert.strictEqual(activeReaderObservers, 0,
+        'An iframe load after CWA is OFF must not reattach its content observer');
+    await wait(30);
+    cwaDom.window.close();
 }
 
 async function runTest() {
@@ -1352,6 +1596,7 @@ async function runTest() {
             retry_safe: true, scope: 'api_admission'
         } // wait 1s
     });
+    await activateReader(dom.window, 'translated');
     
     await wait(800);
     
@@ -1566,6 +1811,8 @@ async function runTest() {
     await assertReaderSafetyAndLanguageResolution();
     await assertBookPreferencesFollowSpaNavigation();
     await assertSpaNavigationWaitsForDestinationContent();
+    await assertEmptyPreviousBookCanActivateDestination();
+    await assertCwaIframeLoadStaysDisconnectedWhenOff();
 
     console.log("All assertions passed.");
     process.exit(0);
