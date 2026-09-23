@@ -10,6 +10,9 @@ API_PORT="$PORT"
 PROXY_PORT="$BT_PROXY_PORT"
 BT_ROLE="${BT_ROLE:-auto}"
 BT_UI_VERSION="$(cat /app/VERSION 2>/dev/null || echo dev)"
+BT_UI_ASSET_HASHES="$(sha256sum /app/static/loader.js /app/static/translator.js /app/static/translator.css)"
+BT_UI_ASSET_SUFFIX="$(printf '%s\n' "$BT_UI_ASSET_HASHES" | sha256sum | cut -c1-12)"
+BT_UI_VERSION="${BT_UI_VERSION}-${BT_UI_ASSET_SUFFIX}"
 
 # Reader upstream normalization: support CWA_URL, CALIBRE_WEB_URL, KAVITA_URL, etc.
 CWA_URL="${CWA_URL:-${CALIBRE_WEB_URL:-${CALIBRE_URL:-${CWA_UPSTREAM:-${BT_CWA_READER_UPSTREAM:-}}}}}"
