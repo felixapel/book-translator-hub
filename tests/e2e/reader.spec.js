@@ -300,16 +300,18 @@ test('route re-entry attaches its observer before starting translation work', as
     });
 
     await page.goto('/read/42');
+    await expect(page.locator('#bt-toggle')).toHaveCount(1);
     await page.evaluate(() => {
         history.pushState({}, '', '/library');
         window.dispatchEvent(new Event('bt:reader-route'));
     });
     await expect(page.locator('#bt-bar')).toBeHidden();
-    await page.evaluate(() => document.querySelector('#bt-toggle').click());
     await page.evaluate(() => {
         history.pushState({}, '', '/read/42');
         window.dispatchEvent(new Event('bt:reader-route'));
     });
+    await expect(page.locator('#bt-bar')).toHaveAttribute('data-mode', 'off');
+    await page.locator('#bt-toggle').click();
 
     const chapter = page.frameLocator('iframe[title="Book chapter"]');
     await expect(chapter.locator('#paragraph-two .bt-translation')).toHaveText(
