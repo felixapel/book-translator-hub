@@ -70,7 +70,12 @@ class ProxyConfigRendererTests(unittest.TestCase):
         self.assertIn("client_max_body_size 2g;", rendered)
         self.assertIn("absolute_redirect off;", rendered)
         self.assertIn("listen 8080;", rendered)
-        self.assertIn("proxy_pass http://calibre-web:8083;", rendered)
+        # The reader upstream is re-resolved via Docker DNS so a recreated
+        # reader container (new IP) never leaves nginx on a stale address.
+        self.assertIn("resolver 127.0.0.11 valid=10s ipv6=off;", rendered)
+        self.assertIn("set $bt_reader_upstream http://calibre-web:8083;", rendered)
+        self.assertIn("proxy_pass $bt_reader_upstream;", rendered)
+        self.assertNotIn("proxy_pass http://calibre-web:8083;", rendered)
         self.assertIn("proxy_pass http://book-translator-api:8390/;", rendered)
         self.assertEqual(rendered.count("proxy_set_header Cookie $http_cookie;"), 1)
         self.assertIn(
@@ -142,7 +147,8 @@ class ProxyConfigRendererTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         rendered = output.read_text(encoding="utf-8")
-        self.assertIn("proxy_pass http://kavita:5000;", rendered)
+        self.assertIn("set $bt_reader_upstream http://kavita:5000;", rendered)
+        self.assertIn("proxy_pass $bt_reader_upstream;", rendered)
         self.assertIn('default "";', rendered)
         self.assertIn("POST $http_cookie;", rendered)
         self.assertNotIn("default $http_cookie;", rendered)

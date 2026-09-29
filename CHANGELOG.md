@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The reader proxy now re-resolves the reader container through Docker DNS (`resolver 127.0.0.11`) instead of once at nginx startup, so recreating CWA or Kavita (new container IP) no longer leaves the hub returning 502 until it is restarted.
+
 ## [2.4.1] - 2026-09-16
 
 ### Changed
