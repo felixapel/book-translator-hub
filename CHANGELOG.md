@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Bumped the pinned Alpine `libexpat` in `Dockerfile.btctl` and the embedded `btctl` bootstrap Dockerfile to `2.8.5-r0`; Alpine no longer serves `2.8.4-r0`, which broke the `docker-smoke` bootstrap step.
+
 ## [2.4.1] - 2026-09-16
 
 ### Changed
