@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The reader proxy now re-resolves the reader container through Docker DNS (`resolver 127.0.0.11`) instead of once at nginx startup, so recreating CWA or Kavita (new container IP) no longer leaves the hub returning 502 until it is restarted.
+- Bumped the pinned Alpine `libexpat` in `Dockerfile.btctl` and the embedded `btctl` bootstrap Dockerfile to `2.8.5-r0`; Alpine no longer serves `2.8.4-r0`, which broke the `docker-smoke` bootstrap step.
 
 ## [2.4.1] - 2026-09-16
 
