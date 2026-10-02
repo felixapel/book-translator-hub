@@ -16,13 +16,13 @@ LABEL org.opencontainers.image.title="Book Translator Hub" \
 # nginx powers the proxy role. Direct and transitive versions are pinned so an
 # Alpine repository update cannot silently change the artifact.
 RUN apk add --no-cache \
-    libcrypto3=3.5.8-r0 \
+    libcrypto3=3.5.9-r0 \
     libgomp=15.2.0-r5 \
-    libssl3=3.5.8-r0 \
+    libssl3=3.5.9-r0 \
     libuuid=2.42.3-r1 \
     libxml2=2.13.9-r2 \
     nginx=1.30.4-r1 \
-    pcre2=10.48-r0
+    pcre2=10.49-r0
 
 # Copy requirements and install. Then strip packaging tooling that is only needed
 # to install wheels: setuptools/wheel/pip (and their vendored trees) are not used
