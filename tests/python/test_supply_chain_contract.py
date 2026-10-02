@@ -37,13 +37,13 @@ BASE_IMAGE = (
 OPERATOR_DOCKERFILE = ROOT / "Dockerfile.btctl"
 NODE_VERSION = "24.18.0"
 APK_PACKAGES = {
-    "libcrypto3": "3.5.8-r0",
-    "libssl3": "3.5.8-r0",
+    "libcrypto3": "3.5.9-r0",
+    "libssl3": "3.5.9-r0",
     "libuuid": "2.42.3-r1",
     "libgomp": "15.2.0-r5",
     "libxml2": "2.13.9-r2",
     "nginx": "1.30.4-r1",
-    "pcre2": "10.48-r0",
+    "pcre2": "10.49-r0",
 }
 
 USES_LINE = re.compile(
@@ -128,7 +128,7 @@ class SupplyChainContractTests(unittest.TestCase):
             for token in addition.split()
         }
         self.assertEqual(installed["git"], "2.54.0-r0")
-        self.assertEqual(installed["docker-cli"], "29.5.3-r1")
+        self.assertEqual(installed["docker-cli"], "29.8.2-r0")
         self.assertEqual(installed["docker-cli-buildx"], "0.34.1-r1")
         self.assertEqual(installed["bash"], "5.3.9-r1")
         self.assertTrue(all("=" in token for addition in additions for token in addition.split()))
