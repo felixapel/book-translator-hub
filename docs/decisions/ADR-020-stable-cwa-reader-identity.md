@@ -21,11 +21,10 @@ derives from the account id returned by `/api/Account`.
 
 During `POST /session`, the CWA connector reads the user id claimed by each
 forwarded credential: `_user_id` in the Flask `session` payload, or `user` in
-the `remember_token` payload (or the stock Flask-Login `id|digest` form). It
-then probes `/ajax/emailstat` with only that one cookie. If CWA accepts the
-probe, CWA has verified that cookie's signature and authenticated the user it
-names, and the tenant becomes an HMAC of `cwa-user:<id>` under the connector
-key.
+the `remember_token` payload. It then probes `/ajax/emailstat` with only
+that one cookie. If CWA accepts the probe, CWA has verified that cookie's
+signature and authenticated the user it names, and the tenant becomes an HMAC
+of `cwa-user:<id>` under the connector key.
 
 - The session cookie is tried first; a rejected session falls back to a
   `remember_token`-only probe. Each probe still uses the browser's address and
@@ -34,8 +33,8 @@ key.
   exchange is rejected without a wider probe.
 - Cookies whose format is not recognized keep the previous combined probe and
   per-credential tenant, so unknown CWA versions are never worse off.
-- Payloads are decoded with bounded inflation and size before any probe and
-  are never persisted, logged or forwarded to the browser.
+- Payloads are decoded with inflation and size bounded to 64 KiB before any
+  probe and are never persisted, logged or forwarded to the browser.
 
 ## Consequences
 
@@ -47,5 +46,8 @@ key.
   failing closed or guessing.
 - Existing per-session CWA cache entries are orphaned and age out through the
   normal TTL and cap.
+- CWA user ids are autoincrement keys in its `app.db`. If that database is
+  recreated while `BT_READER_CONNECTOR_ID` is kept, a new account can reuse an
+  old id and inherit that tenant; rotate the connector id with the reader.
 - The legacy `cwa_session` authentication mode still hashes cookies per
   request and is not changed by this decision.

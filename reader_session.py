@@ -45,8 +45,7 @@ _MAX_COOKIE_HEADER = 16_384
 _MAX_AUTH_HEADER = 8_192
 _MAX_CHUNKS = 16
 _CWA_USER_ID_RE = re.compile(r"^[1-9][0-9]{0,18}$")
-_CWA_STOCK_REMEMBER_RE = re.compile(r"^([1-9][0-9]{0,18})\|[0-9a-f]{32,256}$")
-_CWA_MAX_PAYLOAD_BYTES = 16_384
+_CWA_MAX_PAYLOAD_BYTES = 65_536
 
 
 class BrokerConfigError(ValueError):
@@ -255,10 +254,6 @@ def _signed_cookie_payload(value: str) -> object | None:
 
 def _cwa_cookie_user(name: str, value: str) -> str | None:
     """Return the CWA user id one session/remember cookie claims, if any."""
-    if name == "remember_token":
-        stock = _CWA_STOCK_REMEMBER_RE.fullmatch(value)
-        if stock:
-            return stock.group(1)
     payload = _signed_cookie_payload(value)
     if not isinstance(payload, dict):
         return None

@@ -580,13 +580,58 @@ class CwaStableIdentityTests(unittest.TestCase):
         )
         self.assertEqual(via_remember, via_session)
 
-    def test_stock_flask_login_remember_cookie_identifies_its_user(self):
+    def test_single_cookie_probes_keep_the_browser_binding(self):
+        headers = []
         broker = self.broker(lambda cookie: True)
-        stock = "5|" + "ab" * 64
+        original = broker._http_get
+        broker._http_get = lambda url, **kwargs: (
+            headers.append(kwargs["headers"]) or original(url, **kwargs)
+        )
+
+        self.exchange(broker, f"session={_signed_cookie({'_user_id': '3'})}")
+
+        self.assertEqual(headers[0]["X-Forwarded-For"], "203.0.113.9")
+        self.assertEqual(headers[0]["User-Agent"], "Reader/1.0")
+
+    def test_both_identifying_cookies_rejected_stops_after_two_probes(self):
+        session = _signed_cookie({"_user_id": "3"})
+        remember = _signed_cookie({"user": 3, "random": "r1"})
+
+        def redirect_to_login(url, **kwargs):
+            self.calls.append(kwargs["headers"]["Cookie"])
+            return FakeResponse(b"", status=302, content_type="text/html")
+
+        broker = self.broker(lambda cookie: False)
+        broker._http_get = redirect_to_login
+        with self.assertRaises(BrokerRejected):
+            self.exchange(broker, f"session={session}; remember_token={remember}")
+        self.assertEqual(
+            self.calls, [f"session={session}", f"remember_token={remember}"]
+        )
+
+    def test_unavailable_authority_fails_closed_without_fallback(self):
+        session = _signed_cookie({"_user_id": "3"})
+        remember = _signed_cookie({"user": 3, "random": "r1"})
+        broker = self.broker(lambda cookie: False)
+        broker._http_get = lambda url, **kwargs: (
+            self.calls.append(kwargs["headers"]["Cookie"])
+            or FakeResponse(b"", status=503)
+        )
+
+        with self.assertRaises(BrokerUnavailable):
+            self.exchange(broker, f"session={session}; remember_token={remember}")
+        self.assertEqual(self.calls, [f"session={session}"])
+
+    def test_large_compressed_session_still_identifies_its_user(self):
+        shelves = {str(index): [index, "x" * 40] for index in range(400)}
+        session = _signed_cookie(
+            {"_user_id": "3", "magic_shelf_counts": shelves}, compressed=True
+        )
+        broker = self.broker(lambda cookie: True)
 
         self.assertEqual(
-            self.exchange(broker, f"remember_token={stock}"),
-            self.exchange(broker, f"session={_signed_cookie({'_user_id': '5'})}"),
+            self.exchange(broker, f"session={session}"),
+            self.exchange(broker, f"session={_signed_cookie({'_user_id': '3'})}"),
         )
 
     def test_rejected_identifying_cookies_never_fall_back_to_a_wider_probe(self):
