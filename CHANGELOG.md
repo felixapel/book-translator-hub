@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The reader proxy now re-resolves the reader container through Docker DNS (`resolver 127.0.0.11`) instead of once at nginx startup, so recreating CWA or Kavita (new container IP) no longer leaves the hub returning 502 until it is restarted.
 - Bumped the pinned Alpine `libexpat` in `Dockerfile.btctl` and the embedded `btctl` bootstrap Dockerfile to `2.8.5-r0`; Alpine no longer serves `2.8.4-r0`, which broke the `docker-smoke` bootstrap step.
 - Restored image builds after Alpine 3.24 withdrew more pinned packages: the runtime image now pins `libcrypto3`/`libssl3` `3.5.9-r0` and `pcre2` `10.49-r0`; the operator image and embedded bootstrap pin `pcre2` `10.49-r0`, `nghttp2-libs` `1.70.0-r0` and `docker-cli` `29.8.2-r0`.
+- Managed CWA readers keep one cache and glossary tenant per CWA user. CWA re-signs its session cookie on every response, so the previous cookie-hash tenant changed on every session exchange: server cache hits lasted at most five minutes and per-book glossaries disappeared. Cookies that name a user are now probed one at a time and the tenant follows the proven user id ([ADR-020](docs/decisions/ADR-020-stable-cwa-reader-identity.md)).
 
 ### Security
 

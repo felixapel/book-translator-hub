@@ -7,6 +7,8 @@ contains no upstream credential or personally identifying value.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
 import ipaddress
@@ -18,6 +20,7 @@ import secrets
 import stat
 import threading
 import time
+import zlib
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +44,9 @@ _KAVITA_CERTIFIED_VERSIONS = frozenset({"0.9.0.2", "0.9.1.4"})
 _MAX_COOKIE_HEADER = 16_384
 _MAX_AUTH_HEADER = 8_192
 _MAX_CHUNKS = 16
+_CWA_USER_ID_RE = re.compile(r"^[1-9][0-9]{0,18}$")
+_CWA_STOCK_REMEMBER_RE = re.compile(r"^([1-9][0-9]{0,18})\|[0-9a-f]{32,256}$")
+_CWA_MAX_PAYLOAD_BYTES = 16_384
 
 
 class BrokerConfigError(ValueError):
@@ -220,6 +226,47 @@ def _parse_cookie_header(raw: str) -> OrderedDict[str, str]:
             continue
         parsed[name] = value
     return parsed
+
+
+def _signed_cookie_payload(value: str) -> object | None:
+    """Decode the payload of a Flask/itsdangerous cookie without verifying it.
+
+    The result is trusted only after CWA accepts this exact cookie as the sole
+    credential of a probe, which proves CWA verified its signature.
+    """
+    compressed = value.startswith(".")
+    segment = (value[1:] if compressed else value).split(".", 1)[0]
+    if not segment:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+        if compressed:
+            # Bound inflation: the cookie is attacker-supplied until probed.
+            inflater = zlib.decompressobj()
+            raw = inflater.decompress(raw, _CWA_MAX_PAYLOAD_BYTES)
+            if inflater.unconsumed_tail or not inflater.eof:
+                return None
+        if len(raw) > _CWA_MAX_PAYLOAD_BYTES:
+            return None
+        return json.loads(raw.decode("utf-8"))
+    except (binascii.Error, ValueError, zlib.error, RecursionError):
+        return None
+
+
+def _cwa_cookie_user(name: str, value: str) -> str | None:
+    """Return the CWA user id one session/remember cookie claims, if any."""
+    if name == "remember_token":
+        stock = _CWA_STOCK_REMEMBER_RE.fullmatch(value)
+        if stock:
+            return stock.group(1)
+    payload = _signed_cookie_payload(value)
+    if not isinstance(payload, dict):
+        return None
+    user = payload.get("_user_id" if name == "session" else "user")
+    if isinstance(user, bool) or not isinstance(user, (int, str)):
+        return None
+    user = str(user)
+    return user if _CWA_USER_ID_RE.fullmatch(user) else None
 
 
 def _read_bounded_json(response: object, *, limit: int, deadline: float, clock) -> object:
@@ -475,6 +522,31 @@ class ReaderSessionBroker:
                 except Exception:
                     pass
 
+    def _probe_cwa(self, credentials: dict[str, str], binding: object) -> str:
+        """Prefer a stable CWA user id proven by a single-credential probe.
+
+        CWA re-signs its session cookie on every response, so hashing the
+        cookie would give every exchange a new cache/glossary tenant. Each
+        cookie that names a user is probed alone; CWA can then only have
+        authenticated that cookie, so its decoded user id is the identity.
+        """
+        cookies = _parse_cookie_header(credentials["Cookie"])
+        tried: set[str] = set()
+        for name, value in cookies.items():
+            user = _cwa_cookie_user(name, value)
+            if user is None:
+                continue
+            tried.add(name)
+            try:
+                self._probe({"Cookie": f"{name}={value}"}, binding)
+            except BrokerRejected:
+                continue
+            return f"cwa-user:{user}"
+        if not set(cookies) - tried:
+            raise BrokerRejected("authentication rejected")
+        # Unknown cookie formats keep the per-credential tenant.
+        return self._probe(credentials, binding)
+
     def _remove_token(self, token: str | None) -> None:
         if not token or not _TOKEN_RE.fullmatch(token):
             return
@@ -486,7 +558,10 @@ class ReaderSessionBroker:
     ) -> SessionIssue:
         self._validate_origin(headers)
         credentials, prior = self._credentials(headers)
-        upstream_identity = self._probe(credentials, binding)
+        if self.reader_type == "cwa":
+            upstream_identity = self._probe_cwa(credentials, binding)
+        else:
+            upstream_identity = self._probe(credentials, binding)
         address, user_agent = _binding_parts(binding)
         subject = self._subject(upstream_identity)
         token = self._token_factory()
