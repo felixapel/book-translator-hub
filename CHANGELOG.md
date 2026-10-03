@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Upgraded `urllib3` to `2.8.0` (PYSEC-2026-4175, PYSEC-2026-4176, PYSEC-2026-4177) and the jsdom test dependency `undici` to `8.11.2`, so the `pip-audit` and `npm audit` gates pass again.
+- Removed the unreferenced legacy `deploy/unraid/my-book-translator-hub.xml` example. It published API port `8390` with `BT_AUTH_MODE=disabled` and `BT_ALLOW_INSECURE_AUTH=true` by default, the exact topology the runtime boundary forbids. Managed installs use `btctl`; Community Applications uses the separate digest-pinned listing.
 
 ## [2.4.1] - 2026-09-16
 
