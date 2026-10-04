@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import stat
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 
 from auth import CwaSessionBinding, RequestAuthenticator
@@ -489,6 +491,187 @@ class ReaderSessionBrokerTests(unittest.TestCase):
                 with self.assertRaises(BrokerConfigError):
                     load_or_create_session_key(path)
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
+
+
+def _signed_cookie(payload, *, stamp="ZZ0001", compressed=False):
+    """Build an itsdangerous-shaped cookie; the signature is opaque here."""
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    if compressed:
+        raw = zlib.compress(raw)
+    body = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+    return ("." if compressed else "") + f"{body}.{stamp}.signature-{stamp}"
+
+
+class CwaStableIdentityTests(unittest.TestCase):
+    """CWA re-signs its session cookie on every request; tenants must not."""
+
+    ORIGIN = "https://books.example.test"
+
+    def setUp(self):
+        self.calls = []
+        self.tokens = (f"{letter}" * 43 for letter in "ABCDEFGH")
+
+    def broker(self, accepts):
+        def get(url, **kwargs):
+            cookie = kwargs["headers"]["Cookie"]
+            self.calls.append(cookie)
+            if accepts(cookie):
+                return FakeResponse(b"[]")
+            return FakeResponse(b"", status=401)
+
+        return ReaderSessionBroker(
+            reader_type="cwa",
+            auth_url="http://calibre-web:8083/ajax/emailstat",
+            reader_version="4.0.6",
+            connector_id="01234567-89ab-4cde-8123-0123456789ab",
+            public_origin=self.ORIGIN,
+            secret_key=b"s" * 32,
+            http_get=get,
+            clock=Clock(),
+            token_factory=lambda: next(self.tokens),
+        )
+
+    def exchange(self, broker, cookie):
+        issue = broker.exchange(
+            {"Origin": self.ORIGIN, "Cookie": cookie},
+            CwaSessionBinding("203.0.113.9", "Reader/1.0"),
+        )
+        return issue.subject
+
+    def test_rotated_session_cookies_of_one_user_share_one_tenant(self):
+        broker = self.broker(lambda cookie: True)
+        first = _signed_cookie({"_user_id": "3", "_random": "r1"}, stamp="AAAA")
+        rotated = _signed_cookie(
+            {"_user_id": "3", "_random": "r1", "magic_shelf_counts": {}},
+            stamp="AAAB",
+            compressed=True,
+        )
+        other_user = _signed_cookie({"_user_id": "4"}, stamp="AAAA")
+
+        subjects = [
+            self.exchange(broker, f"session={first}"),
+            self.exchange(broker, f"session={rotated}; remember_token=opaque"),
+            self.exchange(broker, f"session={other_user}"),
+        ]
+
+        self.assertEqual(subjects[0], subjects[1])
+        self.assertNotEqual(subjects[0], subjects[2])
+        # The probe carries exactly the credential the user id was read from.
+        self.assertEqual(
+            self.calls,
+            [f"session={first}", f"session={rotated}", f"session={other_user}"],
+        )
+
+    def test_rejected_session_falls_back_to_a_remember_token_only_probe(self):
+        session = _signed_cookie({"_user_id": "3"}, stamp="AAAA")
+        remember = _signed_cookie({"user": 3, "random": "r1"}, stamp="BBBB")
+        broker = self.broker(lambda cookie: cookie.startswith("remember_token="))
+
+        via_remember = self.exchange(
+            broker, f"session={session}; remember_token={remember}"
+        )
+        via_session = self.exchange(
+            self.broker(lambda cookie: True), f"session={session}"
+        )
+
+        self.assertEqual(
+            self.calls,
+            [f"session={session}", f"remember_token={remember}", f"session={session}"],
+        )
+        self.assertEqual(via_remember, via_session)
+
+    def test_single_cookie_probes_keep_the_browser_binding(self):
+        headers = []
+        broker = self.broker(lambda cookie: True)
+        original = broker._http_get
+        broker._http_get = lambda url, **kwargs: (
+            headers.append(kwargs["headers"]) or original(url, **kwargs)
+        )
+
+        self.exchange(broker, f"session={_signed_cookie({'_user_id': '3'})}")
+
+        self.assertEqual(headers[0]["X-Forwarded-For"], "203.0.113.9")
+        self.assertEqual(headers[0]["User-Agent"], "Reader/1.0")
+
+    def test_both_identifying_cookies_rejected_stops_after_two_probes(self):
+        session = _signed_cookie({"_user_id": "3"})
+        remember = _signed_cookie({"user": 3, "random": "r1"})
+
+        def redirect_to_login(url, **kwargs):
+            self.calls.append(kwargs["headers"]["Cookie"])
+            return FakeResponse(b"", status=302, content_type="text/html")
+
+        broker = self.broker(lambda cookie: False)
+        broker._http_get = redirect_to_login
+        with self.assertRaises(BrokerRejected):
+            self.exchange(broker, f"session={session}; remember_token={remember}")
+        self.assertEqual(
+            self.calls, [f"session={session}", f"remember_token={remember}"]
+        )
+
+    def test_unavailable_authority_fails_closed_without_fallback(self):
+        session = _signed_cookie({"_user_id": "3"})
+        remember = _signed_cookie({"user": 3, "random": "r1"})
+        broker = self.broker(lambda cookie: False)
+        broker._http_get = lambda url, **kwargs: (
+            self.calls.append(kwargs["headers"]["Cookie"])
+            or FakeResponse(b"", status=503)
+        )
+
+        with self.assertRaises(BrokerUnavailable):
+            self.exchange(broker, f"session={session}; remember_token={remember}")
+        self.assertEqual(self.calls, [f"session={session}"])
+
+    def test_large_compressed_session_still_identifies_its_user(self):
+        shelves = {str(index): [index, "x" * 40] for index in range(400)}
+        session = _signed_cookie(
+            {"_user_id": "3", "magic_shelf_counts": shelves}, compressed=True
+        )
+        broker = self.broker(lambda cookie: True)
+
+        self.assertEqual(
+            self.exchange(broker, f"session={session}"),
+            self.exchange(broker, f"session={_signed_cookie({'_user_id': '3'})}"),
+        )
+
+    def test_rejected_identifying_cookies_never_fall_back_to_a_wider_probe(self):
+        session = _signed_cookie({"_user_id": "3"})
+        broker = self.broker(lambda cookie: False)
+
+        with self.assertRaises(BrokerRejected):
+            self.exchange(broker, f"session={session}")
+        self.assertEqual(self.calls, [f"session={session}"])
+
+    def test_undecodable_cookie_still_gets_the_combined_legacy_probe(self):
+        session = _signed_cookie({"_user_id": "3"})
+        broker = self.broker(lambda cookie: "remember_token=" in cookie)
+
+        subject = self.exchange(broker, f"session={session}; remember_token=opaque")
+
+        self.assertEqual(
+            self.calls,
+            [f"session={session}", f"session={session}; remember_token=opaque"],
+        )
+        self.assertTrue(subject.startswith("reader-session:cwa:"))
+
+    def test_malformed_or_hostile_payloads_are_not_identities(self):
+        bomb = zlib.compress(b"[" + b" " * 5_000_000 + b"]")
+        hostile = [
+            "." + base64.urlsafe_b64encode(bomb).rstrip(b"=").decode() + ".t.s",
+            _signed_cookie({"_user_id": "0"}),
+            _signed_cookie({"_user_id": "3x"}),
+            _signed_cookie({"_user_id": True}),
+            _signed_cookie({"_user_id": ["3"]}),
+            _signed_cookie(["_user_id", "3"]),
+            "not-base64!.t.s",
+        ]
+        for value in hostile:
+            with self.subTest(value=value[:24]):
+                self.calls.clear()
+                broker = self.broker(lambda cookie: True)
+                self.exchange(broker, f"session={value}")
+                # No user id was extracted, so only the legacy probe ran.
+                self.assertEqual(self.calls, [f"session={value}"])
 
 
 class ReaderSessionEndpointTests(unittest.TestCase):

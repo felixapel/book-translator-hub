@@ -4,6 +4,7 @@
 - Date: 2026-08-08
 - Amends: [ADR-002](ADR-002-split-non-root-runtime-roles.md)
 - Amends: [ADR-004](ADR-004-authentication-boundaries.md)
+- Amended by: [ADR-020](ADR-020-stable-cwa-reader-identity.md)
 
 ## Context
 

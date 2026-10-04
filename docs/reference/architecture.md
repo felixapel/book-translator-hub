@@ -49,7 +49,10 @@ translation/cache/provider core. There are three deployment profiles:
    `POST /bt-api/session`. `reader_session.py` forwards only selected CWA
    cookies and ignores ambient cookies, or accepts a Kavita
    native access bearer, or exact Kavita OIDC cookie chunks and validates the
-   pinned account endpoint. It persists none of that proof. The response is a
+   pinned account endpoint. CWA cookies that name a user are probed one at a
+   time, so the tenant follows the CWA user id rather than the rotating cookie
+   value (see [ADR-020](../decisions/ADR-020-stable-cwa-reader-identity.md)).
+   It persists none of that proof. The response is a
    random, HttpOnly, SameSite-strict plugin cookie valid for at most five
    minutes and bound to connector, origin, proxy-observed address and
    User-Agent. Ordinary API locations remove Authorization and reduce cookies

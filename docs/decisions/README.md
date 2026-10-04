@@ -23,6 +23,7 @@ discussion.
 - [ADR-017: Adaptive cloud batching and explicit replay safety](ADR-017-adaptive-cloud-batching.md)
 - [ADR-018: Decoupled reverse proxy architecture and draggable reader controls](ADR-018-decoupled-reverse-proxy-and-draggable-controls.md) — superseded.
 - [ADR-019: Managed proxy boundaries for reader authentication](ADR-019-managed-proxy-boundaries.md)
+- [ADR-020: Stable CWA reader identity](ADR-020-stable-cwa-reader-identity.md)
 
 New ADRs use the next number and include a single `Status` value (`Proposed`,
 `Accepted`, `Deprecated` or `Superseded`) plus an ISO date. Amendments and
