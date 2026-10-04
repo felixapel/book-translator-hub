@@ -31,6 +31,8 @@ _KAVITA_CERTIFIED_CONTRACTS = {
     "0.9.0.2": "kavita-0.9.0.2-epub-v1",
     "0.9.1.4": "kavita-0.9.1.4-epub-v1",
 }
+RESOLV_CONF = Path("/etc/resolv.conf")
+HOSTS_FILE = Path("/etc/hosts")
 
 
 class ProxyConfigError(ValueError):
@@ -260,6 +262,67 @@ def _validated_reader_upstream(env: Mapping[str, str]) -> str:
     return upstream
 
 
+def _config_lines(path: Path) -> list[list[str]]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return [
+        re.split(r"[#;]", line, maxsplit=1)[0].split() for line in text.splitlines()
+    ]
+
+
+def _resolver_addresses(resolv_conf: Path) -> list[str]:
+    addresses = []
+    for fields in _config_lines(resolv_conf):
+        if len(fields) < 2 or fields[0] != "nameserver":
+            continue
+        try:
+            address = ipaddress.ip_address(fields[1])
+        except ValueError:
+            continue
+        if isinstance(address, ipaddress.IPv6Address):
+            if address.scope_id:
+                continue
+            addresses.append(f"[{address}]")
+        else:
+            addresses.append(str(address))
+    return addresses
+
+
+def _reader_upstream_routing(
+    upstream: str,
+    proxy_namespace: str,
+    *,
+    resolv_conf: Path = RESOLV_CONF,
+    hosts_file: Path = HOSTS_FILE,
+) -> str:
+    """Render the reader proxy_pass, re-resolving only names DNS can answer.
+
+    nginx's runtime resolver ignores /etc/hosts, and Docker's 127.0.0.11 exists
+    only on user-defined networks. IP literals and hosts-file names cannot
+    change while the container runs, so they keep startup resolution.
+    """
+    host = (urlsplit(upstream).hostname or "").casefold()
+    try:
+        ipaddress.ip_address(host)
+        static = True
+    except ValueError:
+        static = any(
+            host in (name.casefold() for name in fields[1:])
+            for fields in _config_lines(hosts_file)
+        )
+    resolvers = [] if static else _resolver_addresses(resolv_conf)
+    if not resolvers:
+        return f"proxy_pass {upstream};"
+    variable = f"$bt{proxy_namespace}_reader_upstream"
+    return (
+        f"resolver {' '.join(resolvers)} valid=10s ipv6=off;\n"
+        f"        set {variable} {upstream};\n"
+        f"        proxy_pass {variable};"
+    )
+
+
 def _atomic_write(output_path: Path, content: str) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -292,6 +355,9 @@ def render(template_path: Path, output_path: Path, env: Mapping[str, str]) -> No
     replacements = {
         "${BT_PROXY_NAMESPACE}": proxy_namespace,
         "${BT_BROWSER_CONFIG_PATH}": _validated_browser_config_path(env),
+        "${BT_READER_UPSTREAM_ROUTING}": _reader_upstream_routing(
+            reader_upstream, proxy_namespace
+        ),
         "${BT_READER_UPSTREAM}": reader_upstream,
         "${BT_API_UPSTREAM}": api_upstream,
         "${BT_PROXY_PORT}": _validated_port(env, "BT_PROXY_PORT"),
