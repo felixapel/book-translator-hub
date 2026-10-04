@@ -39,24 +39,32 @@ of `cwa-user:<id>` under the connector key.
   session key instead of the session key itself. `btctl uninstall` removes the
   session key to revoke browser sessions, which previously also changed every
   tenant on reinstall or upgrade. The tenant key is kept with the translation
-  data; when it is missing it is created from the current session key, so an
-  install that is upgraded in place keeps its existing tenants.
+  data. A missing tenant key is created from the session key only when that
+  key already existed, so an install restarted in place keeps its tenants and
+  a new install gets an independent key.
 
 ## Consequences
 
 - One CWA user keeps one cache and glossary tenant across cookie rotation,
-  logout and devices, matching Kavita, and both keep them across reinstall
-  and upgrade.
-- An install upgraded by a pre-2.4.1 `btctl uninstall` loses its tenants once,
-  because that release deletes the session key before the tenant key exists.
+  logout and devices, matching Kavita; in the hub both also keep them across
+  reinstall and upgrade.
+- An install upgraded from a pre-2.4.1 runtime via uninstall/install loses its
+  tenants once, because that runtime never created a tenant key before
+  uninstall deleted the session key.
+- Split and Unraid installs regenerate `BT_READER_CONNECTOR_ID` per install,
+  so their tenants still change on reinstall; only the hub, whose connector id
+  is fixed in the operator environment, keeps them.
 - An exchange can make two authority probes instead of one.
 - The connector now depends on CWA keeping Flask/itsdangerous cookie payloads.
   A format change degrades to the previous per-credential tenant rather than
   failing closed or guessing.
 - Existing per-session CWA cache entries are orphaned and age out through the
   normal TTL and cap.
-- CWA user ids are autoincrement keys in its `app.db`. If that database is
-  recreated while `BT_READER_CONNECTOR_ID` is kept, a new account can reuse an
-  old id and inherit that tenant; rotate the connector id with the reader.
+- CWA and Kavita user ids are autoincrement database keys. If a reader's
+  database is recreated while `BT_READER_CONNECTOR_ID` and `tenant_key` are
+  kept, a new account can reuse an old id and inherit that tenant; rotate the
+  connector id or delete `tenant_key` with the reader.
+- `tenant_key` outlives session revocation by design, so retained cache rows
+  stay linkable to reader accounts by anyone who can read the data directory.
 - The legacy `cwa_session` authentication mode still hashes cookies per
   request and is not changed by this decision.

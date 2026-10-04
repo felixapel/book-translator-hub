@@ -527,8 +527,46 @@ class TenantKeyTests(unittest.TestCase):
         self.assertNotEqual(self.session_key.read_bytes(), session_before)
         self.assertEqual(first._subject("7"), second._subject("7"))
         self.assertNotEqual(first._subject("7"), first._subject("8"))
+        # A fresh install never reuses session-key bytes for its tenant key.
+        self.assertNotEqual(self.tenant_key.read_bytes(), session_before)
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE(self.tenant_key.stat().st_mode), 0o600)
+
+    def test_operator_group_installs_create_a_manifest_readable_tenant_key(self):
+        if os.name == "nt":
+            self.skipTest("POSIX modes")
+        broker_from_environment({
+            **self.ENV,
+            "BT_SESSION_KEY_PATH": str(self.session_key),
+            "BT_CACHE_OPERATOR_GROUP_ACCESS": "true",
+        })
+
+        # btctl reads every split data file for migration manifests.
+        self.assertEqual(stat.S_IMODE(self.tenant_key.stat().st_mode), 0o640)
+        self.assertEqual(stat.S_IMODE(self.session_key.stat().st_mode), 0o600)
+
+    def test_tenant_key_accepts_operator_group_read_but_nothing_wider(self):
+        first = self.broker()
+        if os.name == "nt":
+            self.skipTest("POSIX modes")
+        # Split data preparation re-modes retained files 0640 for manifests.
+        self.tenant_key.chmod(0o640)
+        self.assertEqual(self.broker()._subject("7"), first._subject("7"))
+        for mode in (0o644, 0o660, 0o602):
+            with self.subTest(mode=oct(mode)):
+                self.tenant_key.chmod(mode)
+                with self.assertRaises(BrokerConfigError):
+                    self.broker()
+        # The session key itself still requires exactly 0600.
+        self.tenant_key.chmod(0o600)
+        self.session_key.chmod(0o640)
+        with self.assertRaises(BrokerConfigError):
+            self.broker()
+
+    def test_invalid_seed_is_rejected(self):
+        with self.assertRaises(BrokerConfigError):
+            load_or_create_session_key(self.tenant_key, initial=b"short")
+        self.assertFalse(self.tenant_key.exists())
 
     def test_existing_install_keeps_its_current_tenants_on_first_start(self):
         legacy_secret = load_or_create_session_key(self.session_key)

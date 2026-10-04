@@ -657,10 +657,13 @@ def load_or_create_session_key(
     *,
     initial: bytes | None = None,
     label: str = "reader session key",
+    allowed_modes: frozenset[int] = frozenset({0o600}),
+    create_mode: int = 0o600,
 ) -> bytes:
     """Load or atomically create one private 256-bit connector secret.
 
-    ``initial`` seeds a new file instead of fresh random bytes.
+    ``initial`` seeds a new file instead of fresh random bytes. New files get
+    ``create_mode``; ``allowed_modes`` lists modes accepted when loading.
     """
     if initial is not None and (not isinstance(initial, bytes) or len(initial) != 32):
         raise BrokerConfigError(f"{label} seed has an invalid length")
@@ -686,7 +689,7 @@ def load_or_create_session_key(
                     handle.write(payload)
                     handle.flush()
                     os.fsync(handle.fileno())
-                os.chmod(target, 0o600, follow_symlinks=False)
+                os.chmod(target, create_mode, follow_symlinks=False)
                 if hasattr(os, "O_DIRECTORY") and os.name != "nt":
                     try:
                         directory_fd = os.open(
@@ -713,7 +716,10 @@ def load_or_create_session_key(
                 not stat.S_ISREG(metadata.st_mode)
                 or metadata.st_nlink != 1
                 or (hasattr(os, "geteuid") and metadata.st_uid != os.geteuid())
-                or (os.name != "nt" and stat.S_IMODE(metadata.st_mode) != 0o600)
+                or (
+                    os.name != "nt"
+                    and stat.S_IMODE(metadata.st_mode) not in allowed_modes
+                )
                 or metadata.st_size != 32
             ):
                 raise BrokerConfigError(f"{label} must be one private owned file")
@@ -736,15 +742,23 @@ def broker_from_environment(
 ) -> ReaderSessionBroker:
     source = env if env is not None else os.environ
     key_path = Path(source.get("BT_SESSION_KEY_PATH", "/app/data/reader_session_key"))
+    session_key_existed = key_path.exists()
     secret_key = load_or_create_session_key(key_path)
     # btctl uninstall removes the session key but keeps this sibling with the
     # translation data, so cache and glossary tenants survive reinstall.
-    # Seeding a missing tenant key from the current session key keeps the
-    # tenants an existing install already has.
+    # Seeding a missing tenant key from an existing session key keeps the
+    # tenants that install already has; new installs get independent keys.
+    # Like translations.db, the tenant key is operator-group readable when
+    # BT_CACHE_OPERATOR_GROUP_ACCESS is set (split installs manifest data).
+    operator_group_access = source.get(
+        "BT_CACHE_OPERATOR_GROUP_ACCESS", "false"
+    ).strip().lower() in {"1", "true", "yes"}
     tenant_key = load_or_create_session_key(
         key_path.with_name("tenant_key"),
-        initial=secret_key,
+        initial=secret_key if session_key_existed else None,
         label="reader tenant key",
+        allowed_modes=frozenset({0o600, 0o640}),
+        create_mode=0o640 if operator_group_access else 0o600,
     )
     return ReaderSessionBroker(
         reader_type=source.get("BT_READER_TYPE", ""),
