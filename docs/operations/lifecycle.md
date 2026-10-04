@@ -128,7 +128,10 @@ Remove only resources owned by the recorded install:
 The retryable operation preserves the stock reader, external networks, local
 image, translation database, backups and final state evidence. It removes the
 installation-owned `reader_session_key`, so outstanding opaque browser sessions
-cannot survive an uninstall. Reinstalling the same identity and data path after
+cannot survive an uninstall. The sibling `tenant_key` stays with the
+translation database, so each reader's cache and glossary tenants survive
+reinstall and upgrade; delete it together with the database to start over
+deliberately. Reinstalling the same identity and data path after
 a completed uninstall is supported; a successful reinstall creates a fresh key
 and moves the prior final record into `BT_STATE_DIR/history/`. Active, partial
 or mismatched state is never overwritten.

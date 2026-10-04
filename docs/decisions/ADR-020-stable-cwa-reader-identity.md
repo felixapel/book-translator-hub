@@ -35,11 +35,20 @@ of `cwa-user:<id>` under the connector key.
   per-credential tenant, so unknown CWA versions are never worse off.
 - Payloads are decoded with inflation and size bounded to 64 KiB before any
   probe and are never persisted, logged or forwarded to the browser.
+- For both connectors the subject HMAC uses a private `tenant_key` beside the
+  session key instead of the session key itself. `btctl uninstall` removes the
+  session key to revoke browser sessions, which previously also changed every
+  tenant on reinstall or upgrade. The tenant key is kept with the translation
+  data; when it is missing it is created from the current session key, so an
+  install that is upgraded in place keeps its existing tenants.
 
 ## Consequences
 
 - One CWA user keeps one cache and glossary tenant across cookie rotation,
-  logout and devices, matching Kavita.
+  logout and devices, matching Kavita, and both keep them across reinstall
+  and upgrade.
+- An install upgraded by a pre-2.4.1 `btctl uninstall` loses its tenants once,
+  because that release deletes the session key before the tenant key exists.
 - An exchange can make two authority probes instead of one.
 - The connector now depends on CWA keeping Flask/itsdangerous cookie payloads.
   A format change degrades to the previous per-credential tenant rather than

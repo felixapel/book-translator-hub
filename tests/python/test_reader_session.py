@@ -17,6 +17,7 @@ from reader_session import (
     BrokerRejected,
     BrokerUnavailable,
     ReaderSessionBroker,
+    broker_from_environment,
     load_or_create_session_key,
 )
 
@@ -491,6 +492,82 @@ class ReaderSessionBrokerTests(unittest.TestCase):
                 with self.assertRaises(BrokerConfigError):
                     load_or_create_session_key(path)
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
+
+
+class TenantKeyTests(unittest.TestCase):
+    """Cache and glossary tenants must survive reinstall/upgrade."""
+
+    ENV = {
+        "BT_READER_TYPE": "kavita",
+        "BT_READER_AUTH_URL": "http://kavita:5000/api/Account",
+        "BT_READER_VERSION": "0.9.1.4",
+        "BT_READER_CONNECTOR_ID": "01234567-89ab-4cde-8123-0123456789ab",
+        "BT_PUBLIC_ORIGIN": "https://books.example.test",
+    }
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.data = Path(temporary.name)
+        self.session_key = self.data / "reader_session_key"
+        self.tenant_key = self.data / "tenant_key"
+
+    def broker(self):
+        return broker_from_environment(
+            {**self.ENV, "BT_SESSION_KEY_PATH": str(self.session_key)}
+        )
+
+    def test_uninstall_regenerating_the_session_key_keeps_tenants(self):
+        first = self.broker()
+        session_before = self.session_key.read_bytes()
+        self.session_key.unlink()  # btctl uninstall removes only this file
+
+        second = self.broker()
+
+        self.assertNotEqual(self.session_key.read_bytes(), session_before)
+        self.assertEqual(first._subject("7"), second._subject("7"))
+        self.assertNotEqual(first._subject("7"), first._subject("8"))
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(self.tenant_key.stat().st_mode), 0o600)
+
+    def test_existing_install_keeps_its_current_tenants_on_first_start(self):
+        legacy_secret = load_or_create_session_key(self.session_key)
+        legacy = ReaderSessionBroker(
+            reader_type="kavita",
+            auth_url=self.ENV["BT_READER_AUTH_URL"],
+            reader_version="0.9.1.4",
+            connector_id=self.ENV["BT_READER_CONNECTOR_ID"],
+            public_origin=self.ENV["BT_PUBLIC_ORIGIN"],
+            secret_key=legacy_secret,
+        )
+
+        upgraded = self.broker()
+
+        self.assertEqual(self.tenant_key.read_bytes(), legacy_secret)
+        self.assertEqual(upgraded._subject("7"), legacy._subject("7"))
+
+    def test_session_tokens_still_use_the_ephemeral_session_key(self):
+        self.tenant_key.write_bytes(b"t" * 32)
+        self.tenant_key.chmod(0o600)
+
+        broker = self.broker()
+
+        self.assertNotEqual(self.session_key.read_bytes(), b"t" * 32)
+        self.assertEqual(broker._secret, self.session_key.read_bytes())
+        self.assertNotEqual(broker._token_digest("A" * 43), hmac_digest(b"t" * 32))
+
+    def test_unsafe_tenant_key_fails_closed(self):
+        self.tenant_key.write_bytes(b"short")
+        self.tenant_key.chmod(0o600)
+
+        with self.assertRaises(BrokerConfigError):
+            self.broker()
+
+
+def hmac_digest(key):
+    import hmac as _hmac
+
+    return _hmac.digest(key, b"token\x00" + b"A" * 43, "sha256")
 
 
 def _signed_cookie(payload, *, stamp="ZZ0001", compressed=False):

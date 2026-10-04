@@ -309,6 +309,7 @@ class ReaderSessionBroker:
         http_get: Callable[..., object] | None = None,
         clock: Callable[[], float] = time.monotonic,
         token_factory: Callable[[], str] | None = None,
+        tenant_key: bytes | None = None,
     ) -> None:
         if reader_type not in {"cwa", "kavita"}:
             raise BrokerConfigError("BT_READER_TYPE must be cwa or kavita")
@@ -320,6 +321,10 @@ class ReaderSessionBroker:
             raise BrokerConfigError("BT_READER_CONNECTOR_ID must be a canonical UUID")
         if not isinstance(secret_key, bytes) or len(secret_key) < 32:
             raise BrokerConfigError("reader session key must contain at least 256 bits")
+        if tenant_key is None:
+            tenant_key = secret_key
+        if not isinstance(tenant_key, bytes) or len(tenant_key) < 32:
+            raise BrokerConfigError("reader tenant key must contain at least 256 bits")
         ttl = _positive_int(ttl_seconds, "BT_SESSION_TTL_SECONDS")
         if ttl > 300:
             raise BrokerConfigError("BT_SESSION_TTL_SECONDS must not exceed 300")
@@ -348,6 +353,8 @@ class ReaderSessionBroker:
             max_response_bytes, "BT_READER_AUTH_MAX_RESPONSE_BYTES"
         )
         self._secret = secret_key
+        # Sessions die with the install-owned session key; tenants must not.
+        self._tenant_key = tenant_key
         self._http_get = http_get
         self._clock = clock
         self._token_factory = token_factory or (lambda: secrets.token_urlsafe(32))
@@ -364,10 +371,8 @@ class ReaderSessionBroker:
         material = "\0".join(
             (self.reader_type, self.connector_id, upstream_identity)
         ).encode("utf-8")
-        return (
-            f"reader-session:{self.reader_type}:"
-            + self._hmac(b"subject", material).hex()
-        )
+        digest = hmac.digest(self._tenant_key, b"subject\x00" + material, "sha256")
+        return f"reader-session:{self.reader_type}:" + digest.hex()
 
     def _validate_origin(self, headers: Mapping[str, str]) -> None:
         origin = _header(headers, "Origin")
@@ -647,15 +652,25 @@ class ReaderSessionBroker:
         return "; ".join(flags)
 
 
-def load_or_create_session_key(path: Path) -> bytes:
-    """Load or atomically create one private 256-bit connector secret."""
+def load_or_create_session_key(
+    path: Path,
+    *,
+    initial: bytes | None = None,
+    label: str = "reader session key",
+) -> bytes:
+    """Load or atomically create one private 256-bit connector secret.
+
+    ``initial`` seeds a new file instead of fresh random bytes.
+    """
+    if initial is not None and (not isinstance(initial, bytes) or len(initial) != 32):
+        raise BrokerConfigError(f"{label} seed has an invalid length")
     target = Path(path)
     if target.is_symlink() or target.parent.is_symlink():
-        raise BrokerConfigError("reader session key path must not be a symbolic link")
+        raise BrokerConfigError(f"{label} path must not be a symbolic link")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.parent.is_symlink() or not target.parent.is_dir():
-            raise BrokerConfigError("reader session key parent must be a directory")
+            raise BrokerConfigError(f"{label} parent must be a directory")
         try:
             descriptor = os.open(
                 target,
@@ -665,7 +680,7 @@ def load_or_create_session_key(path: Path) -> bytes:
         except FileExistsError:
             descriptor = None
         if descriptor is not None:
-            payload = secrets.token_bytes(32)
+            payload = initial if initial is not None else secrets.token_bytes(32)
             try:
                 with os.fdopen(descriptor, "wb") as handle:
                     handle.write(payload)
@@ -701,17 +716,17 @@ def load_or_create_session_key(path: Path) -> bytes:
                 or (os.name != "nt" and stat.S_IMODE(metadata.st_mode) != 0o600)
                 or metadata.st_size != 32
             ):
-                raise BrokerConfigError("reader session key must be one private owned file")
+                raise BrokerConfigError(f"{label} must be one private owned file")
             payload = os.read(descriptor, 33)
         finally:
             os.close(descriptor)
         if len(payload) != 32:
-            raise BrokerConfigError("reader session key has an invalid length")
+            raise BrokerConfigError(f"{label} has an invalid length")
         return payload
     except BrokerConfigError:
         raise
     except OSError as exc:
-        raise BrokerConfigError("reader session key is unavailable") from exc
+        raise BrokerConfigError(f"{label} is unavailable") from exc
 
 
 def broker_from_environment(
@@ -721,13 +736,24 @@ def broker_from_environment(
 ) -> ReaderSessionBroker:
     source = env if env is not None else os.environ
     key_path = Path(source.get("BT_SESSION_KEY_PATH", "/app/data/reader_session_key"))
+    secret_key = load_or_create_session_key(key_path)
+    # btctl uninstall removes the session key but keeps this sibling with the
+    # translation data, so cache and glossary tenants survive reinstall.
+    # Seeding a missing tenant key from the current session key keeps the
+    # tenants an existing install already has.
+    tenant_key = load_or_create_session_key(
+        key_path.with_name("tenant_key"),
+        initial=secret_key,
+        label="reader tenant key",
+    )
     return ReaderSessionBroker(
         reader_type=source.get("BT_READER_TYPE", ""),
         auth_url=source.get("BT_READER_AUTH_URL", ""),
         reader_version=source.get("BT_READER_VERSION", ""),
         connector_id=source.get("BT_READER_CONNECTOR_ID", ""),
         public_origin=source.get("BT_PUBLIC_ORIGIN", ""),
-        secret_key=load_or_create_session_key(key_path),
+        secret_key=secret_key,
+        tenant_key=tenant_key,
         cookie_name=source.get("BT_SESSION_COOKIE_NAME") or None,
         ttl_seconds=source.get("BT_SESSION_TTL_SECONDS", "300"),
         max_entries=source.get("BT_SESSION_MAX_ENTRIES", "10000"),
