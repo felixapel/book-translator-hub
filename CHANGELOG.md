@@ -7,19 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- The reader proxy now re-resolves the reader container through Docker DNS (`resolver 127.0.0.11`) instead of once at nginx startup, so recreating CWA or Kavita (new container IP) no longer leaves the hub returning 502 until it is restarted.
-- Bumped the pinned Alpine `libexpat` in `Dockerfile.btctl` and the embedded `btctl` bootstrap Dockerfile to `2.8.5-r0`; Alpine no longer serves `2.8.4-r0`, which broke the `docker-smoke` bootstrap step.
-- Restored image builds after Alpine 3.24 withdrew more pinned packages: the runtime image now pins `libcrypto3`/`libssl3` `3.5.9-r0` and `pcre2` `10.49-r0`; the operator image and embedded bootstrap pin `pcre2` `10.49-r0`, `nghttp2-libs` `1.70.0-r0` and `docker-cli` `29.8.2-r0`.
-- Managed CWA readers keep one cache and glossary tenant per CWA user. CWA re-signs its session cookie on every response, so the previous cookie-hash tenant changed on every session exchange: server cache hits lasted at most five minutes and per-book glossaries disappeared. Cookies that name a user are now probed one at a time and the tenant follows the proven user id ([ADR-020](docs/decisions/ADR-020-stable-cwa-reader-identity.md)).
-
-### Security
-
-- Upgraded `urllib3` to `2.8.0` (PYSEC-2026-4175, PYSEC-2026-4176, PYSEC-2026-4177) and the jsdom test dependency `undici` to `8.11.2`, so the `pip-audit` and `npm audit` gates pass again.
-- Removed the unreferenced legacy `deploy/unraid/my-book-translator-hub.xml` example. It published API port `8390` with `BT_AUTH_MODE=disabled` and `BT_ALLOW_INSECURE_AUTH=true` by default, the exact topology the runtime boundary forbids. Managed installs use `btctl`; Community Applications uses the separate digest-pinned listing.
-
-## [2.4.1] - 2026-09-16
+## [2.4.1] - 2026-10-04
 
 ### Changed
 
@@ -31,9 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Historical performance and offline-cache statements describe the work at the
   time of those releases; they are not latency, availability or browser-storage
   guarantees for a new deployment.
+- Every CWA and Kavita reader entry and page reload starts with translation
+  OFF, even when an older mode is stored; book text is sent only after manual
+  activation. OFF skips paragraph scans and content observation.
+- Reader asset URLs are versioned from `VERSION` plus the packaged overlay
+  files, so the one-year immutable cache cannot keep stale JavaScript or CSS
+  between builds that share a version. Missing packaged assets fail startup.
 
 ### Fixed
 
+- The reader proxy now re-resolves the reader container through Docker DNS (`resolver 127.0.0.11`) instead of once at nginx startup, so recreating CWA or Kavita (new container IP) no longer leaves the hub returning 502 until it is restarted.
+- Bumped the pinned Alpine `libexpat` in `Dockerfile.btctl` and the embedded `btctl` bootstrap Dockerfile to `2.8.5-r0`; Alpine no longer serves `2.8.4-r0`, which broke the `docker-smoke` bootstrap step.
+- Restored image builds after Alpine 3.24 withdrew more pinned packages: the runtime image now pins `libcrypto3`/`libssl3` `3.5.9-r0` and `pcre2` `10.49-r0`; the operator image and embedded bootstrap pin `pcre2` `10.49-r0`, `nghttp2-libs` `1.70.0-r0` and `docker-cli` `29.8.2-r0`.
+- Managed CWA readers keep one cache and glossary tenant per CWA user. CWA re-signs its session cookie on every response, so the previous cookie-hash tenant changed on every session exchange: server cache hits lasted at most five minutes and per-book glossaries disappeared. Cookies that name a user are now probed one at a time and the tenant follows the proven user id ([ADR-020](docs/decisions/ADR-020-stable-cwa-reader-identity.md)).
 - Enforced exact Origin, CSRF and CORS boundaries for managed reader-session
   exchange, and covered the exact Origin path in the Community Applications
   smoke gate.
@@ -54,9 +52,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Kept hub smoke response headers in a runner-owned temporary file and accepted
   equivalent Docker tmpfs-size representations during managed hub validation.
 - Pinned patched OpenSSL and libuuid runtime packages.
+- CWA no longer translates earlier clipped columns, waits for a page turn
+  after delayed content, or jumps backward when translation reflows the
+  chapter; admission and rendering are limited to visible source nodes.
+- Calibre tables of contents (`div.calibre1 > ul > li > a`) are translated
+  link by link while keeping their destinations.
 
 ### Security
 
+- Upgraded `urllib3` to `2.8.0` (PYSEC-2026-4175, PYSEC-2026-4176, PYSEC-2026-4177) and the jsdom test dependency `undici` to `8.11.2`, so the `pip-audit` and `npm audit` gates pass again.
+- Removed the unreferenced legacy `deploy/unraid/my-book-translator-hub.xml` example. It published API port `8390` with `BT_AUTH_MODE=disabled` and `BT_ALLOW_INSECURE_AUTH=true` by default, the exact topology the runtime boundary forbids. Managed installs use `btctl`; Community Applications uses the separate digest-pinned listing.
 - CWA reader-session exchange now ignores ambient browser cookies and forwards
   only selected CWA authentication cookies to its validation probe.
 
