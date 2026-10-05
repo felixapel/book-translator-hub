@@ -38,6 +38,7 @@ from singleflight import (
     SingleFlight, SingleFlightCapacityError, SingleFlightTimeout,
 )
 from work_budget import WorkBudget, WorkBudgetExceeded
+from envconfig import env_float, env_int
 
 log = logging.getLogger("book-translator.translator")
 
@@ -100,14 +101,13 @@ LLM_FALLBACK_CUSTOM_API_KEY = os.environ.get(
 #                     model, 1–2 is more stable than 3.
 #   BT_BATCH_SIZE     paragraphs translated per LLM call. >1 is dramatically
 #                     faster on slow models; 1 = one call per paragraph (legacy).
-BT_TIMEOUT = int(os.environ.get("BT_TIMEOUT", "60"))
-BT_MAX_CONCURRENT = int(os.environ.get("BT_MAX_CONCURRENT", "2"))
-BT_BATCH_SIZE = int(os.environ.get("BT_BATCH_SIZE", "5"))
+BT_TIMEOUT = env_int("BT_TIMEOUT", 60)
+BT_MAX_CONCURRENT = env_int("BT_MAX_CONCURRENT", 2)
+BT_BATCH_SIZE = env_int("BT_BATCH_SIZE", 5)
 # Optional source-side budget for adaptive batching. Zero preserves the
 # historical count-only contract; a positive value adds a deterministic token
 # ceiling while still allowing one oversized paragraph as a singleton.
-BT_BATCH_SOURCE_TOKEN_BUDGET = int(os.environ.get(
-    "BT_BATCH_SOURCE_TOKEN_BUDGET", "0"))
+BT_BATCH_SOURCE_TOKEN_BUDGET = env_int("BT_BATCH_SOURCE_TOKEN_BUDGET", 0, minimum=0)
 if BT_BATCH_SOURCE_TOKEN_BUDGET < 0:
     raise ValueError(
         "BT_BATCH_SOURCE_TOKEN_BUDGET must be zero or greater"
@@ -116,16 +116,15 @@ if BT_BATCH_SOURCE_TOKEN_BUDGET < 0:
 # scaled to the input size (see _output_cap) so a rambling/stuck model can't burn
 # thousands of tokens translating a short paragraph — the main cause of 8-20s and
 # 120s "read timeout" stalls. The ceilings only apply to genuinely long inputs.
-BT_MAX_TOKENS = int(os.environ.get("BT_MAX_TOKENS", "4096"))
-BT_BATCH_MAX_TOKENS = int(os.environ.get("BT_BATCH_MAX_TOKENS", "8192"))
+BT_MAX_TOKENS = env_int("BT_MAX_TOKENS", 4096)
+BT_BATCH_MAX_TOKENS = env_int("BT_BATCH_MAX_TOKENS", 8192)
 # Output budget = input_tokens * FACTOR + FLOOR, clamped to the ceiling above.
 # 2.0 is generous (a translation is rarely >2x the source length), so legitimate
 # translations are never truncated; it only reins in runaway generation.
-BT_OUTPUT_TOKEN_FACTOR = float(os.environ.get("BT_OUTPUT_TOKEN_FACTOR", "2.0"))
-BT_OUTPUT_TOKEN_FLOOR = int(os.environ.get("BT_OUTPUT_TOKEN_FLOOR", "256"))
-BT_CONTEXT_WINDOW = int(os.environ.get("BT_CONTEXT_WINDOW", "0"))
-BT_SINGLEFLIGHT_MAX_ENTRIES = int(os.environ.get(
-    "BT_SINGLEFLIGHT_MAX_ENTRIES", "1024"))
+BT_OUTPUT_TOKEN_FACTOR = env_float("BT_OUTPUT_TOKEN_FACTOR", 2.0)
+BT_OUTPUT_TOKEN_FLOOR = env_int("BT_OUTPUT_TOKEN_FLOOR", 256, minimum=0)
+BT_CONTEXT_WINDOW = env_int("BT_CONTEXT_WINDOW", 0, minimum=0)
+BT_SINGLEFLIGHT_MAX_ENTRIES = env_int("BT_SINGLEFLIGHT_MAX_ENTRIES", 1024)
 
 
 # CJK scripts tokenize much denser than Latin (~1-2 chars/token vs ~3.5), so a
@@ -852,8 +851,7 @@ TRANSLATION_CONTRACT_VERSION = "cwa-translate-contract/v2"
 # format_glossary_block so every consumer shares one contract.
 GlossaryTerm = tuple[str, str]
 
-GLOSSARY_MAX_TERMS_IN_PROMPT = int(
-    os.environ.get("BT_GLOSSARY_MAX_TERMS_IN_PROMPT", "50"))
+GLOSSARY_MAX_TERMS_IN_PROMPT = env_int("BT_GLOSSARY_MAX_TERMS_IN_PROMPT", 50)
 
 
 def _normalize_glossary(
@@ -1233,14 +1231,13 @@ def _translate_anthropic(
 # is a PROCESS-WIDE cap on in-flight provider calls. Production defaults are
 # intentionally finite; zero/negative values fail startup instead of silently
 # disabling the control.
-BT_MAX_UPSTREAM_INFLIGHT = int(os.environ.get("BT_MAX_UPSTREAM_INFLIGHT", "2"))
-BT_UPSTREAM_QUEUE_TIMEOUT = float(os.environ.get("BT_UPSTREAM_QUEUE_TIMEOUT", "15"))
-BT_REQUEST_MAX_ATTEMPTS = int(os.environ.get("BT_REQUEST_MAX_ATTEMPTS", "20"))
-BT_REQUEST_MAX_INPUT_BYTES = int(os.environ.get("BT_REQUEST_MAX_INPUT_BYTES", "5000000"))
-BT_REQUEST_MAX_OUTPUT_TOKENS = int(os.environ.get("BT_REQUEST_MAX_OUTPUT_TOKENS", "163840"))
-BT_REQUEST_DEADLINE_SECONDS = float(os.environ.get("BT_REQUEST_DEADLINE_SECONDS", "90"))
-BT_MAX_UPSTREAM_RESPONSE_BYTES = int(os.environ.get(
-    "BT_MAX_UPSTREAM_RESPONSE_BYTES", "1048576"))
+BT_MAX_UPSTREAM_INFLIGHT = env_int("BT_MAX_UPSTREAM_INFLIGHT", 2)
+BT_UPSTREAM_QUEUE_TIMEOUT = env_float("BT_UPSTREAM_QUEUE_TIMEOUT", 15)
+BT_REQUEST_MAX_ATTEMPTS = env_int("BT_REQUEST_MAX_ATTEMPTS", 20)
+BT_REQUEST_MAX_INPUT_BYTES = env_int("BT_REQUEST_MAX_INPUT_BYTES", 5000000)
+BT_REQUEST_MAX_OUTPUT_TOKENS = env_int("BT_REQUEST_MAX_OUTPUT_TOKENS", 163840)
+BT_REQUEST_DEADLINE_SECONDS = env_float("BT_REQUEST_DEADLINE_SECONDS", 90)
+BT_MAX_UPSTREAM_RESPONSE_BYTES = env_int("BT_MAX_UPSTREAM_RESPONSE_BYTES", 1048576)
 
 for _name, _value in {
     "BT_OUTPUT_TOKEN_FACTOR": BT_OUTPUT_TOKEN_FACTOR,

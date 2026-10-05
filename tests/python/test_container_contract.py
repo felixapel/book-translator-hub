@@ -74,7 +74,7 @@ class ContainerContractTests(unittest.TestCase):
         self.assertNotIn("COPY *.py", dockerfile)
         for runtime_module in (
             "auth.py", "cache.py", "server.py", "singleflight.py",
-            "translator.py", "work_budget.py", "reader_session.py",
+            "translator.py", "work_budget.py", "reader_session.py", "envconfig.py",
         ):
             self.assertIn(runtime_module, dockerfile)
         for operator_input in (

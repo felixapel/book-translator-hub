@@ -16,11 +16,13 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from envconfig import env_int
+
 log = logging.getLogger("book-translator.glossary")
 
 GLOSSARY_TABLE = "glossary_v1"
-GLOSSARY_MAX_ENTRIES = int(os.getenv("BT_GLOSSARY_MAX_ENTRIES", "200"))
-GLOSSARY_MAX_TERM_CHARS = int(os.getenv("BT_GLOSSARY_MAX_TERM_CHARS", "200"))
+GLOSSARY_MAX_ENTRIES = env_int("BT_GLOSSARY_MAX_ENTRIES", 200)
+GLOSSARY_MAX_TERM_CHARS = env_int("BT_GLOSSARY_MAX_TERM_CHARS", 200)
 
 _init_lock = threading.Lock()
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Numeric `BT_*` settings now fail startup with the variable's name when they are malformed, and the previously unchecked limits (`BT_TIMEOUT`, `BT_MAX_CONCURRENT`, token ceilings, paragraph, scope, content-length, glossary and feedback caps) reject zero or negative values instead of failing later at request time.
+- The Python test suite no longer writes `translations.db` into the checkout.
+
 ## [2.4.1] - 2026-10-04
 
 ### Changed

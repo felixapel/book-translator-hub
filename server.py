@@ -50,6 +50,7 @@ from cache import (
 )
 import feedback as feedback_store
 import glossary as glossary_store
+from envconfig import env_int
 
 
 def _cache_scope(
@@ -159,7 +160,7 @@ API_TOKEN = os.environ.get("BT_API_TOKEN", "")
 # Request-size caps: one request must not be able to trigger unbounded LLM work
 # (GPU starvation locally, an open-ended bill on cloud APIs). Oversized input is
 # rejected with 413 rather than truncated — silent truncation would corrupt text.
-BT_MAX_BATCH_PARAGRAPHS = int(os.environ.get("BT_MAX_BATCH_PARAGRAPHS", "50"))
+BT_MAX_BATCH_PARAGRAPHS = env_int("BT_MAX_BATCH_PARAGRAPHS", 50)
 if not 1 <= BT_BATCH_SIZE <= 50:
     raise ValueError("BT_BATCH_SIZE must be an integer from 1 to 50")
 if not 1 <= BT_MAX_BATCH_PARAGRAPHS <= 1000:
@@ -178,18 +179,16 @@ if BT_REQUEST_MAX_ATTEMPTS < _min_attempts:
         "BT_REQUEST_MAX_ATTEMPTS too small for BT_MAX_BATCH_PARAGRAPHS / "
         f"BT_BATCH_SIZE: need at least {_min_attempts} attempts"
     )
-BT_MAX_PARAGRAPH_CHARS = int(os.environ.get("BT_MAX_PARAGRAPH_CHARS", "8000"))
-BT_CACHE_SCOPE_MAX_CHARS = int(os.environ.get("BT_CACHE_SCOPE_MAX_CHARS", "512"))
+BT_MAX_PARAGRAPH_CHARS = env_int("BT_MAX_PARAGRAPH_CHARS", 8000)
+BT_CACHE_SCOPE_MAX_CHARS = env_int("BT_CACHE_SCOPE_MAX_CHARS", 512)
 
 # EPUB export caps: one export packages a chapter of already-translated
 # text (no LLM work), so the paragraph count may exceed the per-request
 # translation batch while per-paragraph and total-character backstops still
 # bound ZIP build time and memory. Oversized input is rejected with 413.
-BT_MAX_EXPORT_PARAGRAPHS = int(os.environ.get("BT_MAX_EXPORT_PARAGRAPHS", "500"))
-BT_MAX_EXPORT_TITLE_CHARS = int(os.environ.get("BT_MAX_EXPORT_TITLE_CHARS", "200"))
-BT_MAX_EXPORT_TOTAL_CHARS = int(
-    os.environ.get("BT_MAX_EXPORT_TOTAL_CHARS", str(1024 * 1024))
-)
+BT_MAX_EXPORT_PARAGRAPHS = env_int("BT_MAX_EXPORT_PARAGRAPHS", 500)
+BT_MAX_EXPORT_TITLE_CHARS = env_int("BT_MAX_EXPORT_TITLE_CHARS", 200)
+BT_MAX_EXPORT_TOTAL_CHARS = env_int("BT_MAX_EXPORT_TOTAL_CHARS", 1024 * 1024)
 if not 1 <= BT_MAX_EXPORT_PARAGRAPHS <= 5000:
     raise ValueError(
         "BT_MAX_EXPORT_PARAGRAPHS must be an integer from 1 to 5000"
@@ -211,7 +210,7 @@ if not 1024 <= BT_MAX_EXPORT_TOTAL_CHARS <= 10 * 1024 * 1024:
 # paragraph and rejects a 10 MB body long before the per-field check fires.
 # Operators behind a slow link can lower it; operators on a research cluster
 # translating longer paragraphs can raise it (or lower BT_MAX_PARAGRAPH_CHARS).
-BT_MAX_CONTENT_LENGTH = int(os.environ.get("BT_MAX_CONTENT_LENGTH", str(2 * 1024 * 1024)))
+BT_MAX_CONTENT_LENGTH = env_int("BT_MAX_CONTENT_LENGTH", 2 * 1024 * 1024)
 
 # Rate-limit key: request.remote_addr by default. Behind a reverse proxy every
 # client shares the proxy's address, so opt in to X-Forwarded-For ONLY when
@@ -487,15 +486,11 @@ _rate_limit_lock = threading.Lock()
 _rate_limit_store: dict[str, list[float]] = defaultdict(list)
 _auth_rate_limit_store: dict[str, list[float]] = defaultdict(list)
 _auth_inflight_store: dict[str, int] = {}
-BT_RATE_LIMIT_PER_MINUTE = int(os.environ.get("BT_RATE_LIMIT_PER_MINUTE", "300"))
-BT_RATE_LIMIT_RETRY_AFTER = int(os.environ.get("BT_RATE_LIMIT_RETRY_AFTER", "10"))
-BT_AUTH_RATE_LIMIT_PER_MINUTE = int(
-    os.environ.get("BT_AUTH_RATE_LIMIT_PER_MINUTE", "300")
-)
-BT_AUTH_MAX_INFLIGHT_PER_CLIENT = int(
-    os.environ.get("BT_AUTH_MAX_INFLIGHT_PER_CLIENT", "2")
-)
-BT_RATE_LIMIT_MAX_CLIENTS = int(os.environ.get("BT_RATE_LIMIT_MAX_CLIENTS", "10000"))
+BT_RATE_LIMIT_PER_MINUTE = env_int("BT_RATE_LIMIT_PER_MINUTE", 300)
+BT_RATE_LIMIT_RETRY_AFTER = env_int("BT_RATE_LIMIT_RETRY_AFTER", 10)
+BT_AUTH_RATE_LIMIT_PER_MINUTE = env_int("BT_AUTH_RATE_LIMIT_PER_MINUTE", 300)
+BT_AUTH_MAX_INFLIGHT_PER_CLIENT = env_int("BT_AUTH_MAX_INFLIGHT_PER_CLIENT", 2)
+BT_RATE_LIMIT_MAX_CLIENTS = env_int("BT_RATE_LIMIT_MAX_CLIENTS", 10000)
 
 if min(
     BT_RATE_LIMIT_PER_MINUTE,
