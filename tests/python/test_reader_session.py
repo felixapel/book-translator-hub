@@ -532,6 +532,64 @@ class TenantKeyTests(unittest.TestCase):
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE(self.tenant_key.stat().st_mode), 0o600)
 
+    def test_split_reinstall_with_a_new_connector_id_keeps_tenants(self):
+        first = self.broker()
+        self.session_key.unlink()
+        reinstalled = broker_from_environment({
+            **self.ENV,
+            "BT_SESSION_KEY_PATH": str(self.session_key),
+            # Split and Unraid installs regenerate the connector id.
+            "BT_READER_CONNECTOR_ID": "fedcba98-7654-4321-8fed-cba987654321",
+        })
+
+        self.assertEqual(first._subject("7"), reinstalled._subject("7"))
+
+    def test_retained_data_pointed_at_another_reader_gets_new_tenants(self):
+        first = self.broker()
+        self.session_key.unlink()
+        other_reader = broker_from_environment({
+            **self.ENV,
+            "BT_SESSION_KEY_PATH": str(self.session_key),
+            "BT_READER_AUTH_URL": "http://kavita-b:5000/api/Account",
+        })
+
+        self.assertNotEqual(first._subject("7"), other_reader._subject("7"))
+
+    def test_equivalent_authority_spellings_share_tenants(self):
+        first = self.broker()
+        for spelling in (
+            "http://KAVITA:5000/api/Account",
+            "HTTP://kavita:05000/api/Account",
+        ):
+            with self.subTest(spelling=spelling):
+                same = broker_from_environment({
+                    **self.ENV,
+                    "BT_SESSION_KEY_PATH": str(self.session_key),
+                    "BT_READER_AUTH_URL": spelling,
+                })
+                self.assertEqual(first._subject("7"), same._subject("7"))
+        default_port = broker_from_environment({
+            **self.ENV,
+            "BT_SESSION_KEY_PATH": str(self.session_key),
+            "BT_READER_AUTH_URL": "http://kavita/api/Account",
+        })
+        self.assertEqual(
+            default_port._subject("7"),
+            broker_from_environment({
+                **self.ENV,
+                "BT_SESSION_KEY_PATH": str(self.session_key),
+                "BT_READER_AUTH_URL": "http://kavita:80/api/Account",
+            })._subject("7"),
+        )
+
+    def test_installs_with_separate_data_keep_separate_tenants(self):
+        with tempfile.TemporaryDirectory() as other:
+            other_install = broker_from_environment({
+                **self.ENV,
+                "BT_SESSION_KEY_PATH": str(Path(other) / "reader_session_key"),
+            })
+            self.assertNotEqual(self.broker()._subject("7"), other_install._subject("7"))
+
     def test_operator_group_installs_create_a_manifest_readable_tenant_key(self):
         if os.name == "nt":
             self.skipTest("POSIX modes")

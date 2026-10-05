@@ -42,18 +42,20 @@ of `cwa-user:<id>` under the connector key.
   data. A missing tenant key is created from the session key only when that
   key already existed, so an install restarted in place keeps its tenants and
   a new install gets an independent key.
+- The subject material is the reader type, the normalized
+  `BT_READER_AUTH_URL` and the proven upstream user id.
+  `BT_READER_CONNECTOR_ID` is not part of it: split and Unraid installs
+  regenerate that id per install. The authority URL keeps retained data that
+  is reinstalled against a different reader from inheriting its tenants.
 
 ## Consequences
 
 - One CWA user keeps one cache and glossary tenant across cookie rotation,
-  logout and devices, matching Kavita; in the hub both also keep them across
-  reinstall and upgrade.
+  logout and devices, matching Kavita; with every install profile both also
+  keep them across reinstall and upgrade.
 - An install upgraded from a pre-2.4.1 runtime via uninstall/install loses its
   tenants once, because that runtime never created a tenant key before
   uninstall deleted the session key.
-- Split and Unraid installs regenerate `BT_READER_CONNECTOR_ID` per install,
-  so their tenants still change on reinstall; only the hub, whose connector id
-  is fixed in the operator environment, keeps them.
 - An exchange can make two authority probes instead of one.
 - The connector now depends on CWA keeping Flask/itsdangerous cookie payloads.
   A format change degrades to the previous per-credential tenant rather than
@@ -61,9 +63,13 @@ of `cwa-user:<id>` under the connector key.
 - Existing per-session CWA cache entries are orphaned and age out through the
   normal TTL and cap.
 - CWA and Kavita user ids are autoincrement database keys. If a reader's
-  database is recreated while `BT_READER_CONNECTOR_ID` and `tenant_key` are
-  kept, a new account can reuse an old id and inherit that tenant; rotate the
-  connector id or delete `tenant_key` with the reader.
+  database is recreated, or a different reader is reached at the same
+  authority URL, while `tenant_key` is kept, a new account can reuse an old id
+  and inherit that tenant. To reset, stop the translator and delete both
+  `tenant_key` and `reader_session_key` (or `cwa_tenant_key` in `cwa_session`
+  mode): a missing tenant key is seeded from a surviving session key. Copying a
+  reader's data directory moves its tenants; do it only to move that reader,
+  never to start another one.
 - `tenant_key` outlives session revocation by design, so retained cache rows
   stay linkable to reader accounts by anyone who can read the data directory.
 - The low-level `cwa_session` mode (Community Applications and reference
