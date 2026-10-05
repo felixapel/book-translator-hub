@@ -128,7 +128,12 @@ Remove only resources owned by the recorded install:
 The retryable operation preserves the stock reader, external networks, local
 image, translation database, backups and final state evidence. It removes the
 installation-owned `reader_session_key`, so outstanding opaque browser sessions
-cannot survive an uninstall. Reinstalling the same identity and data path after
+cannot survive an uninstall. The sibling `tenant_key` stays with the
+translation database, so the hub's cache and glossary tenants survive
+reinstall and upgrade; split and Unraid installs still change tenants because
+their connector id is regenerated per install. Delete `tenant_key` together
+with the database to start over deliberately, or delete an empty `tenant_key`
+left by a crash during its first creation. Reinstalling the same identity and data path after
 a completed uninstall is supported; a successful reinstall creates a fresh key
 and moves the prior final record into `BT_STATE_DIR/history/`. Active, partial
 or mismatched state is never overwritten.

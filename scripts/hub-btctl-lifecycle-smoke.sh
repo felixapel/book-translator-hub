@@ -148,8 +148,12 @@ test "$(stat -c '%u:%g:%a' "$DATA_DIR")" = "$(id -u):$(id -g):700"
 "$ROOT_DIR/btctl" --repository "$ROOT_DIR" install --env "$ENV_FILE" --yes --json >/dev/null
 assert_doctor
 test "$(stat -c '%u:%a' "$DATA_DIR")" = "101:2750"
+declare -A tenant_key_before session_key_before
 for reader in cwa kavita; do
     test "$(docker exec "$HUB_CONTAINER" stat -c '%u:%a:%s' "/app/data/$reader/reader_session_key")" = "101:600:32"
+    test "$(docker exec "$HUB_CONTAINER" stat -c '%u:%a:%s' "/app/data/$reader/tenant_key")" = "101:600:32"
+    tenant_key_before[$reader]="$(docker exec "$HUB_CONTAINER" sha256sum "/app/data/$reader/tenant_key" | cut -d' ' -f1)"
+    session_key_before[$reader]="$(docker exec "$HUB_CONTAINER" sha256sum "/app/data/$reader/reader_session_key" | cut -d' ' -f1)"
 done
 
 "$ROOT_DIR/btctl" --repository "$ROOT_DIR" uninstall --env "$ENV_FILE" --yes --json >/dev/null
@@ -159,7 +163,7 @@ for reader in cwa kavita; do
         --entrypoint /bin/sh \
         --mount "type=bind,src=${DATA_DIR},dst=/data,readonly" \
         "$SMOKE_IMAGE" -ec \
-        'test ! -e "/data/$1/reader_session_key"; test -f "/data/$1/translations.db"' \
+        'test ! -e "/data/$1/reader_session_key"; test -f "/data/$1/translations.db"; test -f "/data/$1/tenant_key"' \
         sh "$reader"
 done
 
@@ -168,6 +172,11 @@ done
 # therefore exercised by the same supported btctl workflow.
 "$ROOT_DIR/btctl" --repository "$ROOT_DIR" install --env "$ENV_FILE" --yes --json >/dev/null
 assert_doctor
+# Sessions are revoked by the fresh key; cache and glossary tenants are not.
+for reader in cwa kavita; do
+    test "$(docker exec "$HUB_CONTAINER" sha256sum "/app/data/$reader/tenant_key" | cut -d' ' -f1)" = "${tenant_key_before[$reader]}"
+    test "$(docker exec "$HUB_CONTAINER" sha256sum "/app/data/$reader/reader_session_key" | cut -d' ' -f1)" != "${session_key_before[$reader]}"
+done
 "$ROOT_DIR/btctl" --repository "$ROOT_DIR" uninstall --env "$ENV_FILE" --yes --json >/dev/null
 test ! -e "$STATE_DIR/install-attempt.json"
 printf 'btctl hub fresh and retained lifecycle: OK\n'
