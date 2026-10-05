@@ -18,11 +18,13 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from envconfig import env_int
+
 log = logging.getLogger("book-translator.feedback")
 
 FEEDBACK_TABLE = "feedback_v1"
-FEEDBACK_MAX_ENTRIES = int(os.getenv("BT_FEEDBACK_MAX_ENTRIES", "5000"))
-FEEDBACK_MAX_KEY_CHARS = int(os.getenv("BT_FEEDBACK_MAX_KEY_CHARS", "128"))
+FEEDBACK_MAX_ENTRIES = env_int("BT_FEEDBACK_MAX_ENTRIES", 5000)
+FEEDBACK_MAX_KEY_CHARS = env_int("BT_FEEDBACK_MAX_KEY_CHARS", 128)
 
 RATING_UP = 1
 RATING_DOWN = -1
