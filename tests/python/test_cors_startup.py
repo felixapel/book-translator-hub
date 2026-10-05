@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,6 +14,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CorsStartupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Keep runtime state such as cwa_tenant_key out of the checkout.
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.data_dir = Path(directory.name)
+
     def _environment(self, **overrides: str) -> dict[str, str]:
         env = os.environ.copy()
         for name in tuple(env):
@@ -23,6 +30,7 @@ class CorsStartupTests(unittest.TestCase):
                 "BT_AUTH_MODE": "cwa_session",
                 "BT_CWA_AUTH_URL": "http://calibre-web:8083/ajax/emailstat",
                 "BT_PUBLIC_ORIGIN": "https://books.example.test",
+                "DB_PATH": str(self.data_dir / "translations.db"),
                 "LLM_PROVIDER": "local",
                 "LLM_MODEL": "cors-startup-test-model",
                 "BT_LOCAL_URL": "http://127.0.0.1:1234/v1/chat/completions",

@@ -66,5 +66,16 @@ of `cwa-user:<id>` under the connector key.
   connector id or delete `tenant_key` with the reader.
 - `tenant_key` outlives session revocation by design, so retained cache rows
   stay linkable to reader accounts by anyone who can read the data directory.
-- The legacy `cwa_session` authentication mode still hashes cookies per
-  request and is not changed by this decision.
+- The low-level `cwa_session` mode (Community Applications and reference
+  Compose) applies the same single-cookie identity on every request, but only
+  to unquoted `session` and `remember_token` values. Its subject is an HMAC of
+  the normalized `BT_CWA_AUTH_URL` and user id under a private
+  `cwa_tenant_key` beside `DB_PATH`, written only after the configuration
+  validates. Opaque cookie formats and custom cookie names keep the previous
+  per-credential subject.
+- An accepted probe proves only that CWA authenticated *someone*. If
+  `BT_CWA_AUTH_URL` reached CWA through a proxy that injects reverse-proxy
+  login headers, a forged cookie could name another user's tenant, so the URL
+  must reach CWA directly. Recreating CWA's database while keeping the same URL
+  reuses user ids; delete `cwa_tenant_key` together with the cache when doing
+  so.

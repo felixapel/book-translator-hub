@@ -663,6 +663,272 @@ class CWASessionAuthenticationTests(unittest.TestCase):
         self.assertEqual(len({identity.subject for identity in identities}), 1)
 
 
+class CWASessionStableTenantTests(unittest.TestCase):
+    """CWA re-signs its session on every response; the tenant must not move."""
+
+    USER_AGENT = "Regression-Browser/1.0"
+    PEER = "198.51.100.7"
+
+    def setUp(self):
+        self.app = create_cwa_strong_app()
+        self.client = self.app.test_client(use_cookies=False)
+        self.probes = []
+
+    def login(self, user):
+        response = self.client.get(
+            f"/fixture/login?user={user}",
+            headers={"User-Agent": self.USER_AGENT, "X-Forwarded-For": self.PEER},
+            environ_base={"REMOTE_ADDR": "172.30.39.3"},
+        )
+        return session_cookie_from(response)
+
+    def transport(self, _url, *, headers, **_kwargs):
+        self.probes.append(headers["Cookie"])
+        response = self.client.get(
+            "/ajax/emailstat",
+            headers=headers,
+            environ_base={"REMOTE_ADDR": "172.30.39.4"},
+        )
+        return FakeResponse(
+            status_code=response.status_code,
+            content_type=response.content_type,
+            body=response.data,
+        )
+
+    def authenticator(self, **overrides):
+        return RequestAuthenticator(
+            mode="cwa_session",
+            cwa_auth_url="http://calibre-web:8083/ajax/emailstat",
+            http_get=self.transport,
+            tenant_key=overrides.get("tenant_key", b"k" * 32),
+        )
+
+    def subject(self, authenticator, cookie):
+        return authenticator.authenticate(
+            {"Cookie": cookie},
+            "127.0.0.1",
+            cwa_binding=CwaSessionBinding(self.PEER, self.USER_AGENT),
+        ).subject
+
+    def test_rotated_real_flask_sessions_of_one_user_share_one_tenant(self):
+        auth = self.authenticator()
+        first = self.login(7)
+        time.sleep(1.1)  # itsdangerous timestamps have one-second resolution
+        rotated = self.login(7)
+        self.assertNotEqual(first, rotated)
+
+        subjects = {self.subject(auth, first), self.subject(auth, rotated)}
+        other = self.subject(auth, self.login(8))
+
+        self.assertEqual(len(subjects), 1)
+        self.assertNotIn(other, subjects)
+        self.assertTrue(next(iter(subjects)).startswith("cwa-user:"))
+        # The opaque digest never embeds the raw CWA user id.
+        self.assertNotEqual(next(iter(subjects)), "cwa-user:7")
+
+    def test_identifying_cookie_is_probed_alone(self):
+        auth = self.authenticator()
+        session_cookie = self.login(7)
+
+        self.subject(auth, f"{session_cookie}; remember_token=opaque")
+
+        self.assertEqual(self.probes, [session_cookie])
+
+    def test_opaque_cookies_keep_the_per_credential_tenant(self):
+        auth = self.authenticator()
+        legacy_cookie = self.login("fixture-user")
+
+        subject = self.subject(auth, legacy_cookie)
+
+        self.assertTrue(subject.startswith("cwa-session:"))
+        self.assertEqual(self.probes, [legacy_cookie])
+
+    def test_rejected_identifying_session_is_not_widened(self):
+        session_cookie = self.login(7)
+        auth_with_wrong_agent = RequestAuthenticator(
+            mode="cwa_session",
+            cwa_auth_url="http://calibre-web:8083/ajax/emailstat",
+            http_get=self.transport,
+            tenant_key=b"k" * 32,
+        )
+
+        with self.assertRaises(AuthRejected):
+            auth_with_wrong_agent.authenticate(
+                {"Cookie": session_cookie},
+                "127.0.0.1",
+                cwa_binding=CwaSessionBinding(self.PEER, "Other-Browser/1.0"),
+            )
+        self.assertEqual(self.probes, [session_cookie])
+
+    def test_tenant_key_scopes_and_persists_subjects(self):
+        session_cookie = self.login(7)
+        same = {
+            self.subject(self.authenticator(tenant_key=b"k" * 32), session_cookie)
+            for _ in range(2)
+        }
+        other = self.subject(self.authenticator(tenant_key=b"j" * 32), session_cookie)
+
+        self.assertEqual(len(same), 1)
+        self.assertNotIn(other, same)
+
+    def test_environment_keeps_one_private_tenant_key_beside_the_cache(self):
+        import tempfile
+        import stat
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            env = {
+                "BT_AUTH_MODE": "cwa_session",
+                "BT_CWA_AUTH_URL": "http://calibre-web:8083/ajax/emailstat",
+                "DB_PATH": str(Path(directory) / "translations.db"),
+            }
+            session_cookie = self.login(7)
+            first = RequestAuthenticator.from_environment(env, http_get=self.transport)
+            second = RequestAuthenticator.from_environment(env, http_get=self.transport)
+            key = Path(directory) / "cwa_tenant_key"
+
+            self.assertEqual(
+                self.subject(first, session_cookie), self.subject(second, session_cookie)
+            )
+            self.assertEqual(key.stat().st_size, 32)
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(key.stat().st_mode), 0o600)
+            self.assertFalse((Path(directory) / "tenant_key").exists())
+
+    def test_cwa_url_scopes_the_subject(self):
+        session_cookie = self.login(7)
+        other_cwa = RequestAuthenticator(
+            mode="cwa_session",
+            cwa_auth_url="http://calibre-web-2:8083/ajax/emailstat",
+            http_get=self.transport,
+            tenant_key=b"k" * 32,
+        )
+
+        self.assertNotEqual(
+            self.subject(self.authenticator(), session_cookie),
+            self.subject(other_cwa, session_cookie),
+        )
+
+    def test_invalid_configuration_writes_no_tenant_key(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(AuthConfigError):
+                RequestAuthenticator.from_environment({
+                    "BT_AUTH_MODE": "cwa_session",
+                    "BT_CWA_AUTH_URL": "http://calibre-web:8083/ping",
+                    "DB_PATH": str(Path(directory) / "translations.db"),
+                })
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    @unittest.skipIf(os.name == "nt", "POSIX modes")
+    def test_operator_group_access_creates_a_group_readable_key(self):
+        import tempfile
+        import stat
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            env = {
+                "BT_AUTH_MODE": "cwa_session",
+                "BT_CWA_AUTH_URL": "http://calibre-web:8083/ajax/emailstat",
+                "BT_CACHE_OPERATOR_GROUP_ACCESS": "true",
+                "DB_PATH": str(Path(directory) / "translations.db"),
+            }
+            RequestAuthenticator.from_environment(env, http_get=self.transport)
+            key = Path(directory) / "cwa_tenant_key"
+            self.assertEqual(stat.S_IMODE(key.stat().st_mode), 0o640)
+            # A key prepared group-readable stays accepted without the flag.
+            del env["BT_CACHE_OPERATOR_GROUP_ACCESS"]
+            RequestAuthenticator.from_environment(env, http_get=self.transport)
+
+
+def _cwa_cookie(payload):
+    """Build an itsdangerous-shaped cookie value; the signature is opaque."""
+    import base64
+    import json
+
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode() + ".ZZ0001.signature"
+
+
+class CWASessionProbeSelectionTests(unittest.TestCase):
+    """Which cookies are probed alone, and when the combined probe is used."""
+
+    BINDING = CwaSessionBinding("198.51.100.7", "Regression-Browser/1.0")
+
+    def setUp(self):
+        self.probes = []
+        self.accept = lambda cookie: True
+
+    def transport(self, _url, *, headers, **_kwargs):
+        cookie = headers["Cookie"]
+        self.probes.append(cookie)
+        if self.accept(cookie):
+            return FakeResponse(body=b'[{"error": null}]')
+        return FakeResponse(content_type="text/html", body=b"<title>Login</title>")
+
+    def authenticate(self, cookie, **options):
+        auth = RequestAuthenticator(
+            mode="cwa_session",
+            cwa_auth_url="http://calibre-web:8083/ajax/emailstat",
+            http_get=self.transport,
+            tenant_key=b"k" * 32,
+            **options,
+        )
+        return auth.authenticate(
+            {"Cookie": cookie}, "127.0.0.1", cwa_binding=self.BINDING
+        ).subject
+
+    def test_both_identifying_cookies_rejected_makes_no_combined_probe(self):
+        session = f"session={_cwa_cookie({'_user_id': '3'})}"
+        remember = f"remember_token={_cwa_cookie({'user': 3, 'random': 'r'})}"
+        self.accept = lambda cookie: False
+
+        with self.assertRaises(AuthRejected):
+            self.authenticate(f"{session}; {remember}")
+        self.assertEqual(self.probes, [session, remember])
+
+    def test_rejected_session_falls_back_to_the_remember_token_subject(self):
+        session = f"session={_cwa_cookie({'_user_id': '3'})}"
+        remember = f"remember_token={_cwa_cookie({'user': 3, 'random': 'r'})}"
+        self.accept = lambda cookie: cookie == remember
+
+        via_remember = self.authenticate(f"{session}; {remember}")
+        self.accept = lambda cookie: True
+        via_session = self.authenticate(session)
+
+        self.assertEqual(via_remember, via_session)
+        self.assertTrue(via_remember.startswith("cwa-user:"))
+
+    def test_rejected_session_with_opaque_remember_uses_the_combined_probe(self):
+        session = f"session={_cwa_cookie({'_user_id': '3'})}"
+        combined = f"{session}; remember_token=opaque"
+        self.accept = lambda cookie: cookie == combined
+
+        subject = self.authenticate(combined)
+
+        self.assertTrue(subject.startswith("cwa-session:"))
+        self.assertEqual(self.probes, [session, combined])
+
+    def test_quoted_cookie_values_stay_opaque(self):
+        value = _cwa_cookie({"_user_id": "3"})
+        quoted = f'session="{value}"'
+
+        subject = self.authenticate(quoted)
+
+        self.assertTrue(subject.startswith("cwa-session:"))
+        self.assertEqual(self.probes, [quoted])
+
+    def test_custom_cookie_names_are_never_identifying(self):
+        custom = f"cwa_sid={_cwa_cookie({'_user_id': '3', 'user': 3})}"
+
+        subject = self.authenticate(custom, cwa_cookie_names=("cwa_sid",))
+
+        self.assertTrue(subject.startswith("cwa-session:"))
+        self.assertEqual(self.probes, [custom])
+
+
 class ServerAuthenticationIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.original_authenticator = server.AUTHENTICATOR

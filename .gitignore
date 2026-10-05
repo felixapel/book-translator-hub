@@ -26,6 +26,12 @@ graphify-out/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Private runtime keys (never commit)
+reader_session_key
+tenant_key
+cwa_tenant_key
+cleanup_token
 backups/
 /config/translator/
 /data/
