@@ -23,7 +23,7 @@ services:
     environment:
       - BT_ROLE=api
       # Validate the browser's existing HttpOnly CWA session and derive an
-      # opaque per-session cache tenant. No credential is stored in JS.
+      # opaque per-user cache tenant (ADR-020). No credential is stored in JS.
       - BT_AUTH_MODE=cwa_session
       - BT_PUBLIC_ORIGIN=${BT_PUBLIC_ORIGIN:?Set BT_PUBLIC_ORIGIN to the exact browser-facing origin}
       - BT_CWA_AUTH_URL=http://calibre-web:8083/ajax/emailstat

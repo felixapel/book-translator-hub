@@ -197,7 +197,7 @@ use an opaque server-owned subject, not a request-supplied address or header.
 
 | Variable | Default | Boundary |
 |---|---:|---|
-| `DB_PATH` | `translations.db` | SQLite path; production images use `/app/data/translations.db`. |
+| `DB_PATH` | `translations.db` | SQLite path; production images use `/app/data/translations.db`. In `cwa_session` mode a private `cwa_tenant_key` beside it keeps cache tenants stable; back it up and delete it together with the database. |
 | `BT_CACHE_TTL_DAYS` | `90` | Mandatory expiry. |
 | `BT_CACHE_MAX_ENTRIES` | `100000` | Mandatory row cap. |
 | `BT_CACHE_HIT_FLUSH_THRESHOLD` | `100` | Batched hit-counter flush threshold. |

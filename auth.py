@@ -14,10 +14,12 @@ import logging
 import math
 import os
 import re
+import secrets
 import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 from http.cookies import CookieError, SimpleCookie
 from typing import Callable, Mapping
 from urllib.parse import urlsplit
@@ -191,6 +193,29 @@ def _validate_http_url(value: str) -> str:
     return value
 
 
+def _load_cwa_tenant_key(source: Mapping[str, str]) -> bytes:
+    """Load the private cwa_session tenant key kept beside the cache.
+
+    Called only after the configuration validated, so a rejected startup
+    never writes a key. Its own file keeps it independent of the
+    reader-session tenant key that may share the data directory.
+    """
+    from reader_session import BrokerConfigError, load_or_create_session_key
+
+    operator_group_access = source.get(
+        "BT_CACHE_OPERATOR_GROUP_ACCESS", "false"
+    ).strip().lower() in {"1", "true", "yes"}
+    try:
+        return load_or_create_session_key(
+            Path(source.get("DB_PATH", "translations.db")).parent / "cwa_tenant_key",
+            label="CWA tenant key",
+            allowed_modes=frozenset({0o600, 0o640}),
+            create_mode=0o640 if operator_group_access else 0o600,
+        )
+    except BrokerConfigError as exc:
+        raise AuthConfigError(str(exc)) from exc
+
+
 class _ValidationCache:
     """Small TTL/LRU cache containing only opaque decision hashes and booleans."""
 
@@ -245,6 +270,7 @@ class RequestAuthenticator:
         cwa_max_response_bytes: int = 262_144,
         http_get: Callable[..., object] | None = None,
         reader_session_broker: object | None = None,
+        tenant_key: bytes | None = None,
     ) -> None:
         normalized_mode = str(mode).strip().lower()
         if normalized_mode not in _SUPPORTED_MODES:
@@ -263,6 +289,12 @@ class RequestAuthenticator:
 
         self._cwa_auth_url = ""
         self._cookie_names: tuple[str, ...] = ()
+        if tenant_key is not None and (
+            not isinstance(tenant_key, bytes) or len(tenant_key) < 32
+        ):
+            raise AuthConfigError("CWA tenant key must contain at least 256 bits")
+        # Without a persistent key, user tenants are stable only per process.
+        self._tenant_key = tenant_key or secrets.token_bytes(32)
         self._cwa_timeout_seconds = _finite_positive(
             cwa_timeout_seconds, "BT_CWA_AUTH_TIMEOUT_SECONDS"
         )
@@ -404,6 +436,8 @@ class RequestAuthenticator:
             http_get=http_get,
             reader_session_broker=reader_session_broker,
         )
+        if authenticator.mode == "cwa_session":
+            authenticator._tenant_key = _load_cwa_tenant_key(source)
         if authenticator.mode == "disabled":
             log.warning(
                 "BT_AUTH_MODE=disabled: all requests share one anonymous tenant; development only"
@@ -525,27 +559,58 @@ class RequestAuthenticator:
     ) -> AuthIdentity:
         validated_binding = _validated_cwa_binding(binding)
         cookie_header, canonical = self._selected_cookies(headers)
+        # CWA re-signs its session on every response, so a cookie hash would
+        # move the tenant on every request. Probe each cookie that names a user
+        # alone; an accepted probe proves CWA authenticated that user (ADR-020).
+        from reader_session import _cwa_cookie_user
+
+        pairs = [part.split("=", 1) for part in canonical.split("\0")]
+        tried: set[str] = set()
+        for name, value in pairs:
+            # Only the two CWA credential names, and only values CWA reads
+            # byte-for-byte (quoted or escaped values stay opaque).
+            if name not in {"session", "remember_token"} or '"' in value or "\\" in value:
+                continue
+            user = _cwa_cookie_user(name, value)
+            if user is None:
+                continue
+            tried.add(name)
+            single = f"{name}={value}"
+            if self._cwa_cookie_valid(single, single, validated_binding):
+                material = "\0".join((self._cwa_auth_url, user)).encode("utf-8")
+                digest = hmac.new(
+                    self._tenant_key, b"cwa-user\x00" + material, "sha256"
+                ).hexdigest()
+                return AuthIdentity(f"cwa-user:{digest}", frozenset(), self.mode)
+        if not {name for name, _value in pairs} - tried:
+            raise AuthRejected("authentication rejected")
+        if not self._cwa_cookie_valid(cookie_header, canonical, validated_binding):
+            raise AuthRejected("authentication rejected")
         session_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        decision_key = _cwa_decision_key(session_key, validated_binding)
+        return AuthIdentity(
+            f"cwa-session:{session_key}",
+            frozenset(),
+            self.mode,
+        )
+
+    def _cwa_cookie_valid(
+        self, cookie_header: str, canonical: str, binding: CwaSessionBinding
+    ) -> bool:
+        session_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        decision_key = _cwa_decision_key(session_key, binding)
         valid = self._validation_cache.get(decision_key)
         if valid is None:
             try:
                 result = self._validation_flights.run(
                     decision_key,
-                    lambda: self._probe_cwa(cookie_header, validated_binding),
+                    lambda: self._probe_cwa(cookie_header, binding),
                     timeout=self._cwa_timeout_seconds + 0.25,
                 )
             except (SingleFlightCapacityError, SingleFlightTimeout):
                 raise AuthUnavailable("authentication authority unavailable") from None
             valid = result.value
             self._validation_cache.put(decision_key, valid)
-        if not valid:
-            raise AuthRejected("authentication rejected")
-        return AuthIdentity(
-            f"cwa-session:{session_key}",
-            frozenset(),
-            self.mode,
-        )
+        return bool(valid)
 
     def _probe_cwa(
         self, cookie_header: str, binding: CwaSessionBinding

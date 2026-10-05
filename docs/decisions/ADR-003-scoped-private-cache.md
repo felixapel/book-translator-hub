@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-12
-- Amended by: [ADR-009](ADR-009-side-by-side-cache-schemas.md)
+- Amended by: [ADR-009](ADR-009-side-by-side-cache-schemas.md), [ADR-020](ADR-020-stable-cwa-reader-identity.md)
 
 ## Context
 
@@ -37,3 +37,4 @@ enabled.
 - The server-owned authenticated subject is the tenant namespace. CWA sessions
   and trusted forwarded identities are isolated; shared-token mode deliberately
   shares one tenant and anonymous mode is explicit development-only behavior.
+  ADR-020 narrows a CWA tenant from one session to one verified CWA user.
