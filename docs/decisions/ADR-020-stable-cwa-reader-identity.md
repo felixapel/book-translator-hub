@@ -73,3 +73,9 @@ of `cwa-user:<id>` under the connector key.
   `cwa_tenant_key` beside `DB_PATH`, written only after the configuration
   validates. Opaque cookie formats and custom cookie names keep the previous
   per-credential subject.
+- An accepted probe proves only that CWA authenticated *someone*. If
+  `BT_CWA_AUTH_URL` reached CWA through a proxy that injects reverse-proxy
+  login headers, a forged cookie could name another user's tenant, so the URL
+  must reach CWA directly. Recreating CWA's database while keeping the same URL
+  reuses user ids; delete `cwa_tenant_key` together with the cache when doing
+  so.

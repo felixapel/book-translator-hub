@@ -155,7 +155,7 @@ standalone Compose example accepts the same environment names.
 | `BT_AUTH_MODE` | `token` | `reader_session`, legacy low-level `cwa_session`, `forwarded`, `token` or development-only `disabled`. Managed native-reader installs derive `reader_session`. |
 | `BT_ALLOW_INSECURE_AUTH` | `false` | Second acknowledgement required for `disabled`; never use in production. |
 | `BT_API_TOKEN` | empty | Required by token mode; shared tenant and compatibility use only. |
-| `BT_CWA_AUTH_URL` | empty | Exact CWA `/ajax/emailstat` URL for session validation. |
+| `BT_CWA_AUTH_URL` | empty | Exact CWA `/ajax/emailstat` URL for session validation. It must reach CWA directly, never through a proxy that injects reverse-proxy login headers. |
 | `BT_CWA_AUTH_COOKIE_NAMES` | `session,remember_token` | Only cookies permitted to leave the API for the CWA probe. |
 | `BT_CWA_AUTH_TIMEOUT_SECONDS` | `2` | Probe timeout. |
 | `BT_CWA_AUTH_CACHE_TTL_SECONDS` | `15` | Short positive and negative validation-cache TTL. |
@@ -197,7 +197,7 @@ use an opaque server-owned subject, not a request-supplied address or header.
 
 | Variable | Default | Boundary |
 |---|---:|---|
-| `DB_PATH` | `translations.db` | SQLite path; production images use `/app/data/translations.db`. In `cwa_session` mode a private `cwa_tenant_key` beside it keeps cache tenants stable; back it up and delete it together with the database. |
+| `DB_PATH` | `translations.db` | SQLite path; production images use `/app/data/translations.db`. In `cwa_session` mode a private `cwa_tenant_key` beside it keeps cache tenants stable; back it up, and delete it together with the database or when CWA's user database is recreated. An empty file left by a crash during first creation may be deleted. |
 | `BT_CACHE_TTL_DAYS` | `90` | Mandatory expiry. |
 | `BT_CACHE_MAX_ENTRIES` | `100000` | Mandatory row cap. |
 | `BT_CACHE_HIT_FLUSH_THRESHOLD` | `100` | Batched hit-counter flush threshold. |
