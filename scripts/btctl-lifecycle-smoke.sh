@@ -283,6 +283,8 @@ test "$(docker inspect "$KAVITA_CONTAINER" --format '{{.State.Running}}')" = "tr
 test "$(docker inspect "$CWA_CONTAINER" --format '{{.State.Running}}')" = "true"
 assert_doctor "$FRESH_ENV"
 
+# Split installs regenerate their connector id, but tenants follow tenant_key.
+fresh_tenant_key="$(sha256sum "$FRESH_DATA/tenant_key" | cut -d' ' -f1)"
 rm -- "$FRESH_STATE/state.json"
 ./btctl adopt --env "$FRESH_ENV" --json | python3 -c \
     'import json,sys; assert json.load(sys.stdin)["status"] == "adopted"'
@@ -295,6 +297,7 @@ test "$(docker inspect "$CWA_CONTAINER" --format '{{.State.Running}}')" = "true"
 ./btctl install --env "$FRESH_ENV" --yes --json >/dev/null
 assert_doctor "$FRESH_ENV"
 test "$(find "$FRESH_STATE/history" -type f -name '*-uninstalled.json' | wc -l)" = "1"
+test "$(sha256sum "$FRESH_DATA/tenant_key" | cut -d' ' -f1)" = "$fresh_tenant_key"
 ./btctl uninstall --env "$FRESH_ENV" --yes --json >/dev/null
 
 # Real offline migration: an exact v2.1.4 container and v1 database become a

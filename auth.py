@@ -562,7 +562,7 @@ class RequestAuthenticator:
         # CWA re-signs its session on every response, so a cookie hash would
         # move the tenant on every request. Probe each cookie that names a user
         # alone; an accepted probe proves CWA authenticated that user (ADR-020).
-        from reader_session import _cwa_cookie_user
+        from reader_session import _authority_identity, _cwa_cookie_user
 
         pairs = [part.split("=", 1) for part in canonical.split("\0")]
         tried: set[str] = set()
@@ -577,7 +577,9 @@ class RequestAuthenticator:
             tried.add(name)
             single = f"{name}={value}"
             if self._cwa_cookie_valid(single, single, validated_binding):
-                material = "\0".join((self._cwa_auth_url, user)).encode("utf-8")
+                material = "\0".join(
+                    (_authority_identity(self._cwa_auth_url), user)
+                ).encode("utf-8")
                 digest = hmac.new(
                     self._tenant_key, b"cwa-user\x00" + material, "sha256"
                 ).hexdigest()

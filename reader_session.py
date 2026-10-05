@@ -124,6 +124,20 @@ def _clean_origin(value: str, *, allow_loopback_http: bool = True) -> tuple[str,
     return normalized, parsed.scheme == "https"
 
 
+def _authority_identity(url: str) -> str:
+    """Canonical scheme, host, port and path of a validated authority URL.
+
+    Tenant subjects hash this, so equivalent spellings (host case, an
+    explicit default port, leading zeros) must not split a reader's tenants.
+    """
+    parsed = urlsplit(url)
+    host = parsed.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return f"{parsed.scheme}://{host}:{port}{parsed.path}"
+
+
 def _validate_auth_url(reader_type: str, value: str) -> str:
     expected_path = "/api/Account" if reader_type == "kavita" else "/ajax/emailstat"
     try:
@@ -368,8 +382,12 @@ class ReaderSessionBroker:
         return self._hmac(b"token", token.encode("ascii"))
 
     def _subject(self, upstream_identity: str) -> str:
+        # The reader authority, not the connector id, names the user namespace:
+        # split/Unraid installs regenerate the connector id per install, which
+        # must not move tenants, while retained data pointed at another reader
+        # must not inherit them (ADR-020).
         material = "\0".join(
-            (self.reader_type, self.connector_id, upstream_identity)
+            (self.reader_type, _authority_identity(self.auth_url), upstream_identity)
         ).encode("utf-8")
         digest = hmac.digest(self._tenant_key, b"subject\x00" + material, "sha256")
         return f"reader-session:{self.reader_type}:" + digest.hex()

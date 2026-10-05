@@ -166,7 +166,7 @@ standalone Compose example accepts the same environment names.
 | `BT_READER_AUTH_URL` | empty | Exact managed account probe: CWA `/ajax/emailstat` or Kavita `/api/Account`. |
 | `BT_READER_VERSION` | empty | Exact version included in the fail-closed browser and API contract. |
 | `BT_READER_CONTRACT_VERSION` | empty | Derived connector contract; never operator-invented. |
-| `BT_READER_CONNECTOR_ID` | empty | Installation UUID binding opaque sessions to one connector. |
+| `BT_READER_CONNECTOR_ID` | empty | Installation UUID of one connector. Cache tenants do not depend on it (ADR-020). |
 | `BT_READER_AUTH_TIMEOUT_SECONDS` | `2` | Timeout for the native reader account probe. |
 | `BT_READER_AUTH_MAX_RESPONSE_BYTES` | `262144` | Maximum decompressed reader account response. |
 | `BT_SESSION_KEY_PATH` | `/app/data/reader_session_key` | Private owned 256-bit connector key created by lifecycle code. |
