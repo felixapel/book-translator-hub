@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Updated Werkzeug to 3.1.9 (CVE-2026-102598) and the development-only `source-map-js` to 1.2.2 (GHSA-68fv-2mgg-jv7q, event-loop denial of service). The v2.4.1 runtime image ships Werkzeug 3.1.8.
+
 ### Fixed
 
 - Numeric `BT_*` settings now fail startup with the variable's name when they are malformed, and the previously unchecked limits (`BT_TIMEOUT`, `BT_MAX_CONCURRENT`, token ceilings, paragraph, scope, content-length, glossary and feedback caps) reject zero or negative values instead of failing later at request time.
