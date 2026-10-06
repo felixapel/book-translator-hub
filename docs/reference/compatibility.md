@@ -9,7 +9,7 @@ Anything else is not a promise until its acceptance checks are added.
 
 | Component | Status | Boundary |
 |---|---|---|
-| CWA 4.x | Contract-supported, Tier 1 | An exact stable version and matching running image tag/label are required. The release reference is CWA `4.0.6`; `4.0.8` is browser-accepted with v2.4.1 for the managed hub and Community Applications profiles. A future 4.x UI change still requires browser acceptance before promotion. |
+| CWA 4.x | Contract-supported, Tier 1 | An exact stable version and matching running image tag/label are required. The release reference is CWA `4.0.6`; `4.0.8` is browser-accepted for the managed hub and Community Applications profiles. A future 4.x UI change still requires browser acceptance before promotion. |
 | CWA 3.1.4 | Legacy migration only | Accepted only as the source of `btctl upgrade`; it is not a fresh v2.4 runtime target. |
 | Other CWA 3.x or pre-release/mutable tags | Rejected | `btctl plan` fails before a production-image build or deployment mutation. A stock-host bootstrap may still warm ordinary Docker build cache. |
 | Stock CWA container | Required | The managed proxy-injection topology does not replace templates, mount overlay files into CWA, or own the CWA container. |
@@ -40,7 +40,7 @@ Split installations remain supported when separate container boundaries matter.
 | Environment | Status | Notes |
 |---|---|---|
 | Stock Unraid 7.3.2 on x86_64 | Managed and acceptance-targeted | The automated gate runs public `./btctl` plan/install/doctor/uninstall without host Python or Git. Use `BT_INSTALL_PROFILE=unraid` as root with Docker, Bash, and a full Git checkout; NerdTools is not required. Each reader needs separate physical-host and browser acceptance before promotion. |
-| Community Applications on Unraid 7.3.2 x86_64 | Contract and CI certified; listing-dependent | The combined non-root profile supports CWA 4.0.6 and 4.0.8 (browser-accepted with v2.4.1), native CWA sessions and a local OpenAI-compatible LLM. Only proxy port 8080 is mapped; API port 8390 remains private. Install only from a searchable listing with an anonymously verified digest-pinned image. See [Community Applications](../install/community-applications.md). |
+| Community Applications on Unraid 7.3.2 x86_64 | Contract and CI certified; listing-dependent | The combined non-root profile supports CWA 4.0.6 and 4.0.8 (browser-accepted), native CWA sessions and a local OpenAI-compatible LLM. Only proxy port 8080 is mapped; API port 8390 remains private. Install only from a searchable listing with an anonymously verified digest-pinned image. See [Community Applications](../install/community-applications.md). |
 | Linux with an existing Compose-managed reader | Managed and CI contract-tested | Use `BT_INSTALL_PROFILE=compose-existing`; CWA or Kavita stays external to the generated private Compose document. A Docker-capable non-root account is supported when the same account and private primary group are used for every lifecycle command. |
 | Docker Engine with `docker compose` plugin | Required for Compose profile | The current development audit used Docker `29.6.1` and Compose `5.3.1`. CI also builds and exercises the image on a real Docker runner. No lower minimum is claimed without a matching gate. |
 | ARM64 Linux/Unraid | Not yet CI-certified | The source build may work where pinned base/package inputs resolve, but promotion requires an ARM build and runtime smoke gate. |

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-10-06
+
+### Changed
+
+- The Community Applications profile and the managed hub are browser-accepted with CWA 4.0.8.
+
 ### Security
 
 - Updated Werkzeug to 3.1.9 (CVE-2026-102598) and the development-only `source-map-js` to 1.2.2 (GHSA-68fv-2mgg-jv7q, event-loop denial of service). The v2.4.1 runtime image ships Werkzeug 3.1.8.
