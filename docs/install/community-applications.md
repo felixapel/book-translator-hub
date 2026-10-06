@@ -13,7 +13,8 @@ mutable `latest` image.
 ## Certified boundary
 
 - Stock Unraid 7.3.2 on x86_64 (`linux/amd64`).
-- Stock CWA 4.0.6 reachable on an explicitly selected Docker network.
+- Stock CWA 4.0.6 or 4.0.8 reachable on an explicitly selected Docker network
+  (4.0.8 browser-accepted with v2.4.1).
 - Native CWA sessions with default `TRUSTED_PROXY_COUNT=1`.
 - Local OpenAI-compatible `/v1/chat/completions` provider.
 - One combined `BT_ROLE=all` container running as `101:102` with private mode
