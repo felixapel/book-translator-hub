@@ -191,14 +191,16 @@
     // BOOK_TRANSLATOR.persistCache=true. Backend SQLite remains the durable,
     // server-side cache (and is tenant-isolated when identity auth is enabled).
     const PERSIST_CACHE = cfg.persistCache === true;
-    const CACHE_PREFIX = 'bt_cache_v3_';
-    const LEGACY_CACHE_PREFIX = 'bt_cache_v2_';
+    const CACHE_PREFIX = 'bt_cache_v4_';
+    const LEGACY_CACHE_PREFIXES = ['bt_cache_v2_', 'bt_cache_v3_'];
     const CACHE_MAX_ENTRIES = 5000;      // safety cap to stay under the localStorage quota
 
-    // v2 keys omitted book/chapter/source/prompt context. Remove them rather
-    // than risk rendering a stale or cross-user translation after upgrade.
+    // v2 keys omitted source context; v3 may hold unsanitized reasoning.
+    // Opaque keys cannot prove which values came from literal <think> source
+    // text, so start a fresh browser generation and consult the backend again.
     try {
-        Object.keys(localStorage).filter(k => k.startsWith(LEGACY_CACHE_PREFIX))
+        Object.keys(localStorage).filter(k =>
+            LEGACY_CACHE_PREFIXES.some(prefix => k.startsWith(prefix)))
             .forEach(k => localStorage.removeItem(k));
     } catch (e) { /* storage may be unavailable */ }
     // The former IndexedDB layer copied every translation without eviction,
