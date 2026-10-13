@@ -1743,6 +1743,37 @@ def translate_text(
     return translated, provider
 
 
+def _iter_sse_lines(response, budget: WorkBudget):
+    """Yield SSE lines without buffering more than the response byte cap.
+
+    One network chunk can carry several events, so the budget is checked
+    before every line and once more before the stream counts as complete.
+    """
+    pending = bytearray()
+    for chunk in response.iter_content(chunk_size=8192):
+        budget.ensure_active()
+        if not chunk:
+            continue
+        if not isinstance(chunk, bytes):
+            raise ValueError("provider returned a non-bytes stream chunk")
+        pending.extend(chunk)
+        while (newline := pending.find(b"\n")) >= 0:
+            if newline > BT_MAX_UPSTREAM_RESPONSE_BYTES:
+                raise _ProviderResponseTooLarge(
+                    "provider stream line exceeds byte cap"
+                )
+            line = bytes(pending[:newline]).rstrip(b"\r")
+            del pending[:newline + 1]
+            budget.ensure_active()
+            yield line
+        if len(pending) > BT_MAX_UPSTREAM_RESPONSE_BYTES:
+            raise _ProviderResponseTooLarge("provider stream line exceeds byte cap")
+    if pending:
+        budget.ensure_active()
+        yield bytes(pending).rstrip(b"\r")
+    budget.ensure_active()
+
+
 def _call_provider_stream(
     p: _Provider,
     user_content: str,
@@ -1751,23 +1782,30 @@ def _call_provider_stream(
     max_tokens: int,
     budget: WorkBudget,
 ):
-    """Call provider with SSE streaming if supported, yielding token strings."""
-    if p.api_type == "openai":
-        headers = {"Content-Type": "application/json"}
-        if p.api_key:
-            headers["Authorization"] = f"Bearer {p.api_key}"
-        payload = {
-            "model": p.model,
-            "max_tokens": max_tokens,
-            "stream": True,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-        }
-        if p.name != "gemini":
-            payload["temperature"] = 0.3
+    """Yield OpenAI-compatible SSE deltas inside the caller's upstream slot."""
+    headers = {"Content-Type": "application/json"}
+    if p.api_key:
+        headers["Authorization"] = f"Bearer {p.api_key}"
+    payload = {
+        "model": p.model,
+        "max_tokens": max_tokens,
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    if p.name != "gemini":
+        payload["temperature"] = 0.3
 
+    if p.name == CUSTOM_PROVIDER_ID:
+        # Same per-attempt DNS vetting and address pinning as _call_provider.
+        _endpoint, pinned_host, pinned_addresses = _resolve_custom_endpoint(
+            p.url, budget=budget
+        )
+        _HTTP_CALL_CONTEXT.pinned_host = pinned_host
+        _HTTP_CALL_CONTEXT.pinned_addresses = pinned_addresses
+    try:
         resp = _provider_post(
             p.url,
             headers=headers,
@@ -1776,31 +1814,66 @@ def _call_provider_stream(
             stream=True,
             budget=budget,
         )
-        if hasattr(resp, "raise_for_status"):
-            resp.raise_for_status()
-        for line in resp.iter_lines():
-            budget.ensure_active()
-            if not line:
+    finally:
+        _HTTP_CALL_CONTEXT.__dict__.pop("pinned_host", None)
+        _HTTP_CALL_CONTEXT.__dict__.pop("pinned_addresses", None)
+    try:
+        resp.raise_for_status()
+        for line in _iter_sse_lines(resp, budget):
+            if not line.startswith(b"data: "):
                 continue
-            line_str = line.decode("utf-8", errors="replace")
-            if line_str.startswith("data: "):
-                chunk_data = line_str[6:].strip()
-                if chunk_data == "[DONE]":
-                    break
-                try:
-                    data = json.loads(chunk_data)
-                    delta = (
-                        data.get("choices", [{}])[0]
-                        .get("delta", {})
-                        .get("content", "")
-                    )
-                    if delta:
-                        yield delta
-                except Exception:
-                    continue
-    else:
-        res = _call_provider(p, user_content, system_prompt, 1, timeout, max_tokens, budget)
-        yield res
+            chunk_data = line[6:].strip()
+            if chunk_data == b"[DONE]":
+                break
+            try:
+                delta = (
+                    json.loads(chunk_data)
+                    .get("choices", [{}])[0]
+                    .get("delta", {})
+                    .get("content", "")
+                )
+            except (ValueError, AttributeError, IndexError, TypeError):
+                continue
+            if isinstance(delta, str) and delta:
+                yield delta
+    finally:
+        _close_provider_response(resp)
+
+
+def _stream_provider_error(p: _Provider, exc: Exception) -> _ProviderCallError:
+    """Classify a streaming failure with the same policy as _call_provider."""
+    error_type = type(exc).__name__
+    if isinstance(exc, (requests.exceptions.SSLError,
+                        _CustomEndpointConfigurationError)):
+        return _ProviderCallError(
+            p.name, 0, error_type, retryable=False, fallback_eligible=False
+        )
+    if isinstance(exc, requests.exceptions.RequestException):
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", 0) or 0
+        transient = status_code in {408, 500, 502, 503, 504} or (
+            status_code == 0
+            and isinstance(
+                exc,
+                (requests.exceptions.ConnectionError, requests.exceptions.Timeout),
+            )
+        )
+        if status_code == 429:
+            _record_provider_call("rate_limited")
+        return _ProviderCallError(
+            p.name,
+            status_code,
+            error_type,
+            retryable=transient,
+            fallback_eligible=transient,
+            retry_after_seconds=(
+                _retry_after_seconds(response) if status_code == 429 else None
+            ),
+        )
+    # DNS failures, oversized lines and malformed payloads.
+    return _ProviderCallError(
+        p.name, 0, error_type, retryable=False, fallback_eligible=True
+    )
 
 
 def translate_text_stream(
@@ -1816,6 +1889,12 @@ def translate_text_stream(
     """
     Translate a single text, yielding deltas as they are generated.
     Yields (delta_text, provider_name).
+
+    Only OpenAI-compatible backends stream; other protocols yield their whole
+    translation once. A provider failure before any delta may use the next
+    eligible provider. After a delta has been yielded, the consumer already
+    holds part of this provider's text, so a failure ends the stream with
+    ``provider_stream_interrupted`` instead of appending another translation.
     """
     resolved_timeout = BT_TIMEOUT if timeout is None else timeout
     if budget is None:
@@ -1831,44 +1910,78 @@ def translate_text_stream(
     last_provider_error: _ProviderCallError | None = None
 
     for p in providers:
+        if p.api_type != "openai":
+            # _call_provider owns its upstream slot and attempt reservation.
+            try:
+                translated = _call_provider(
+                    p, text, system, 1, resolved_timeout, max_tokens, budget
+                )
+            except WorkBudgetExceeded:
+                raise
+            except _ProviderCallError as e:
+                last_provider_error = e
+                log.warning(
+                    "provider=%s stream failed status=%s error_type=%s",
+                    p.name, e.status_code, e.error_type,
+                )
+                if not e.fallback_eligible:
+                    break
+                continue
+            except Exception as e:
+                log.warning(
+                    "provider=%s stream terminal error_type=%s",
+                    p.name, type(e).__name__,
+                )
+                break
+            yield translated, p.cache_namespace
+            return
+
         attempt_recorded = False
+        yielded_any = False
         try:
             _acquire_upstream_slot(budget)
             try:
                 budget.reserve_attempt(text + system, max_tokens)
                 _record_provider_call("attempt")
                 attempt_recorded = True
-
-                yielded_any = False
-                for delta in _call_provider_stream(p, text, system, resolved_timeout, max_tokens, budget):
+                for delta in _call_provider_stream(
+                    p, text, system, resolved_timeout, max_tokens, budget
+                ):
                     yielded_any = True
                     yield delta, p.cache_namespace
-                if yielded_any:
-                    _record_provider_call("success")
-                    return
             finally:
                 _UPSTREAM_SEM.release()
         except WorkBudgetExceeded:
             if attempt_recorded:
                 _record_provider_call("failure")
             raise
-        except _ProviderCallError as e:
-            if attempt_recorded:
-                _record_provider_call("failure")
-            last_provider_error = e
-            log.warning(
-                "provider=%s stream failed status=%s error_type=%s, trying fallback",
-                p.name, e.status_code, e.error_type,
-            )
-            continue
         except Exception as e:
             if attempt_recorded:
                 _record_provider_call("failure")
+            # A deadline surfaced as a transport error stays request-fatal.
+            budget.ensure_active()
+            if yielded_any:
+                log.warning(
+                    "provider=%s stream interrupted error_type=%s",
+                    p.name, type(e).__name__,
+                )
+                raise ProviderUnavailableError(
+                    "Provider stream interrupted after partial output",
+                    error_code="provider_stream_interrupted",
+                ) from None
+            last_provider_error = _stream_provider_error(p, e)
             log.warning(
-                "provider=%s stream failed error_type=%s, trying fallback",
-                p.name, type(e).__name__,
+                "provider=%s stream failed status=%s error_type=%s",
+                p.name,
+                last_provider_error.status_code,
+                last_provider_error.error_type,
             )
+            if not last_provider_error.fallback_eligible:
+                break
             continue
+        if yielded_any:
+            _record_provider_call("success")
+            return
 
     rate_limited = (
         last_provider_error is not None
@@ -1883,7 +1996,6 @@ def translate_text_stream(
             last_provider_error.retry_after_seconds if rate_limited else None
         ),
     )
-
 
 
 # ── Batched translation ──────────────────────────────────────────────────────

@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A one-paragraph translation group is cached under a contract that includes the book glossary. The first visible paragraph is such a group, so adding or changing a glossary term previously kept serving its cached pre-glossary translation, and translations made with a glossary were stored under the no-glossary key. Entries already stored that way remain reachable only if the book's glossary is emptied again.
+- `/translate/stream` with an Anthropic-protocol provider (Anthropic, MiniMax) no longer waits for a second upstream slot while holding the first. With `BT_MAX_UPSTREAM_INFLIGHT=1` every such request failed with `work_budget_exhausted`, and two concurrent requests blocked each other until the queue timeout.
+- A provider stream that fails after sending part of a translation now ends with `provider_stream_interrupted` instead of appending a complete fallback translation to the partial text and caching the result. Failures before the first delta still use an eligible fallback, and HTTP failures follow the same retry, fallback and `provider_rate_limited` policy as non-streamed calls.
+- Streamed translations are stripped and must be non-empty before they are cached, so they match non-streamed provider output. Streamed responses are closed when the stream ends, a single SSE line is bounded by `BT_MAX_UPSTREAM_RESPONSE_BYTES`, and `openai-compatible` streams connect only to the per-attempt vetted public addresses.
 
 ## [2.4.2] - 2026-10-06
 

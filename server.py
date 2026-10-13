@@ -1961,8 +1961,15 @@ def translate_stream():
                 backend_used = backend
                 yield f"data: {json.dumps({'delta': delta, 'cached': False})}\n\n"
 
-            complete_translation = "".join(full_text)
+            # Same normalization and emptiness rule as non-streamed provider
+            # text, so every cache contract stores one canonical value.
+            complete_translation = "".join(full_text).strip()
             elapsed_ms = int((time.monotonic() - start) * 1000)
+            if not complete_translation:
+                _record_metric(elapsed_ms, hits=0, misses=1, error=True)
+                _record_outcome("invalid_provider_response")
+                yield f"event: error\ndata: {json.dumps({'error': 'invalid_provider_response', 'error_code': 'invalid_provider_response', 'request_id': req_id})}\n\n"
+                return
             _record_metric(elapsed_ms, hits=0, misses=1)
 
             try:
@@ -2009,7 +2016,10 @@ def translate_stream():
                     pass
                 _invalidate_stats_cache()
             except Exception as e:
-                log.error("Failed to cache streamed translation: %s", e)
+                log.error(
+                    "Cache write failed (non-fatal) error_type=%s",
+                    type(e).__name__,
+                )
 
             yield f"event: done\ndata: {json.dumps({'translated': complete_translation, 'cached': False, 'backend': backend_used, 'elapsed_ms': elapsed_ms, 'request_id': req_id})}\n\n"
         except WorkBudgetExceeded as exc:
