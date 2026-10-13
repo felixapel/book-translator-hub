@@ -2029,7 +2029,9 @@ def batch_cache_contract(
     paragraphs.
     """
     if len(idxs) == 1 and BT_CONTEXT_WINDOW == 0:
-        return single_cache_contract(source_lang, target_lang)
+        # A singleton is translated with the single-text prompt, glossary
+        # included, so it must share that exact contract.
+        return single_cache_contract(source_lang, target_lang, glossary)
     if not idxs:
         raise ValueError("batch cache contract requires at least one index")
     if any(

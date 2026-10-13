@@ -135,6 +135,23 @@ class GlossaryPromptTests(unittest.TestCase):
         )
         self.assertNotEqual(base.prompt_hash, with_terms.prompt_hash)
 
+    def test_singleton_batch_contract_separates_glossaries(self):
+        # A one-paragraph group is translated with the single-text prompt,
+        # glossary included, so its cache contract must include it too.
+        terms = [("Warp", "Curvatura")]
+        with mock.patch.object(translator, "BT_CONTEXT_WINDOW", 0):
+            base = translator.batch_cache_contract(
+                ["Warp now"], [0], "English", "Spanish"
+            )
+            with_terms = translator.batch_cache_contract(
+                ["Warp now"], [0], "English", "Spanish", terms
+            )
+        self.assertNotEqual(base.prompt_hash, with_terms.prompt_hash)
+        self.assertEqual(
+            with_terms,
+            translator.single_cache_contract("English", "Spanish", terms),
+        )
+
     def test_single_translation_injects_glossary_into_system_prompt(self):
         captured = {}
 
@@ -298,6 +315,35 @@ class GlossaryEndpointTests(unittest.TestCase):
         self.assertEqual(
             mock_batch.call_args.kwargs["glossary"], [("Warp", "Curvatura")]
         )
+
+    def test_new_term_bypasses_a_single_paragraph_cached_without_it(self):
+        from translator import BatchTranslationItem
+
+        scope = {"book_id": "book-singleton-glossary", "chapter_id": "ch-1"}
+        with (
+            mock.patch.object(translator, "BT_CONTEXT_WINDOW", 0),
+            mock.patch.object(
+                server,
+                "translate_batch",
+                return_value=[
+                    BatchTranslationItem("Hola Warp", "local", True, "direct")
+                ],
+            ) as mock_batch,
+        ):
+            first = self.app.post(
+                "/translate/batch", json={"paragraphs": ["Hello Warp"], **scope}
+            )
+            self.assertEqual(first.get_json()["cached"], [False])
+            self.app.post(
+                "/glossary",
+                json={"source": "Warp", "target": "Curvatura", **scope},
+            )
+            second = self.app.post(
+                "/translate/batch", json={"paragraphs": ["Hello Warp"], **scope}
+            )
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.get_json()["cached"], [False])
+        self.assertEqual(mock_batch.call_count, 2)
 
 
 if __name__ == "__main__":

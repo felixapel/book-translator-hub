@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A one-paragraph translation group is cached under a contract that includes the book glossary. The first visible paragraph is such a group, so adding or changing a glossary term previously kept serving its cached pre-glossary translation, and translations made with a glossary were stored under the no-glossary key. Entries already stored that way remain reachable only if the book's glossary is emptied again.
+
 ## [2.4.2] - 2026-10-06
 
 ### Changed
