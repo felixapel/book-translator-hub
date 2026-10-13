@@ -98,7 +98,7 @@ class SupplyChainContractTests(unittest.TestCase):
     def test_supply_chain_contract_is_a_required_backend_gate(self):
         for workflow in WORKFLOWS:
             self.assertIn(
-                "-m unittest discover -v tests/python",
+                "-m unittest discover -v -s tests/python -t .",
                 workflow.read_text(),
                 f"{workflow}: every discovered contract must run in CI",
             )

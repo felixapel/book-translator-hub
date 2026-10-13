@@ -81,7 +81,7 @@ jobs:
       - run: python3 -m tests.python.test_translation
       - run: python3 -m tests.python.test_hardening
       - run: python3 -m coverage erase
-      - run: python3 -m coverage run --branch --source=. --omit='.venv/*,tests/*,tools/*' -m unittest discover -v tests/python
+      - run: python3 -m coverage run --branch --source=. --omit='.venv/*,tests/*,tools/*' -m unittest discover -v -s tests/python -t .
       - run: python3 -m coverage report --precision=1 --show-missing --fail-under="$BT_COVERAGE_FAIL_UNDER"
 
   frontend:
