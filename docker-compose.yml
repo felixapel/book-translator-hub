@@ -89,6 +89,8 @@ services:
     image: cwa-ebook-translate-plugin:local
     environment:
       - BT_ROLE=proxy
+      # Optional exact immediate edge IPs; empty keeps socket-peer forwarding.
+      - BT_EDGE_TRUSTED_PROXIES=${BT_EDGE_TRUSTED_PROXIES:-}
       - CWA_UPSTREAM=http://calibre-web:8083
       - BT_API_UPSTREAM=http://translator-api:8390
       # Fixed public authority forwarded to CWA/API. Require an explicit value

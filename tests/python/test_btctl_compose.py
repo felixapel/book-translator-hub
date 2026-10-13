@@ -292,6 +292,26 @@ class ComposeRenderTests(unittest.TestCase):
             version="2.2.0", sha="d" * 40, clean=True
         )
 
+    def test_inline_edge_trust_is_projected_to_proxy_only_for_each_reader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for reader in ("cwa", "kavita"):
+                with self.subTest(reader=reader):
+                    configured = values(Path(directory), reader=reader)
+                    configured["BT_EDGE_TRUSTED_PROXIES"] = "192.0.2.8/32"
+                    config = InstallConfig.from_mapping(configured, self.identity)
+                    document = render_compose(
+                        config, DeploymentPlan.from_config(config), "install-id",
+                        _inline_environment=True,
+                    )
+                    self.assertEqual(
+                        document["services"]["proxy"]["environment"]["BT_EDGE_TRUSTED_PROXIES"],
+                        "192.0.2.8",
+                    )
+                    self.assertNotIn(
+                        "BT_EDGE_TRUSTED_PROXIES",
+                        document["services"]["api"]["environment"],
+                    )
+
     def test_normal_profile_has_two_hardened_roles_and_only_proxy_port(self):
         with tempfile.TemporaryDirectory() as directory:
             config = InstallConfig.from_mapping(values(Path(directory)), self.identity)

@@ -29,7 +29,8 @@ ARG BTCTL_SOURCE_VERSION
 WORKDIR /opt/btctl
 COPY VERSION ./
 COPY btctl.py btctl_auth.py btctl_compose.py btctl_container.py btctl_core.py btctl_docker.py btctl_hub.py btctl_lifecycle.py btctl_paths.py btctl_reconfigure.py btctl_unraid.py hub_runtime.py ./
-COPY proxy/render_config.py ./proxy/render_config.py
+COPY proxy/render_config.py ./proxy/
+COPY proxy/edge_trust.py proxy/header_contract.py ./proxy/
 COPY deploy/unraid/my-cwa-translate-api.xml.tmpl deploy/unraid/my-cwa-translate-proxy.xml.tmpl ./deploy/unraid/
 
 RUN python3 -c 'import os,re; revision=os.environ["BTCTL_SOURCE_REVISION"]; version=os.environ["BTCTL_SOURCE_VERSION"]; assert re.fullmatch(r"[0-9a-f]{40}", revision); assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version); assert open("VERSION", encoding="utf-8").read().strip() == version'

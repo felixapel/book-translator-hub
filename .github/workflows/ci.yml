@@ -90,10 +90,20 @@ jobs:
         run: sh scripts/ci-docker-names.sh
       - name: Verify Docker daemon
         run: docker version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: ".node-version"
+      - name: Prepare native browser smoke
+        run: |
+          set -e
+          npm ci
+          npx playwright install --with-deps --only-shell chromium
       - name: Build image
         run: docker build -t "$SMOKE_IMAGE" .
       - name: Exercise independent hardened roles
         run: ./scripts/container-smoke.sh "$SMOKE_IMAGE" "$SMOKE_PREFIX"
+      - name: Exercise exact-edge nginx and native browser sessions
+        run: ./scripts/edge-trust-smoke.sh "$SMOKE_IMAGE"
       - name: Exercise the managed lifecycle and migration
         run: ./scripts/btctl-lifecycle-smoke.sh "$SMOKE_IMAGE" "$SMOKE_PREFIX"
       - name: Exercise the stock-Unraid bootstrap without host Python

@@ -35,6 +35,7 @@ all enabled-reader allocations without exceeding the total.
 | `BT_INSTALL_PROFILE` | `unraid` or `compose-existing`. The stock reader always remains external. |
 | `BT_INSTALL_NAME` | Stable prefix for owned translator resources. Choose once. |
 | `BT_INGRESS_MODE` | `published` exposes only the proxy; `docker-edge` publishes neither role. |
+| `BT_EDGE_TRUSTED_PROXIES` | Optional exact immediate edge IPs, comma separated; empty trusts no edge. Applied only at nginx, independently of network membership and API/identity trust. |
 | `BT_PROXY_PORT` | Host port for the proxy in `published` mode. |
 | `BT_EDGE_NETWORK` | Existing edge network required by `docker-edge`. |
 | `BT_AUTH_PROFILE` | `cwa-session` for CWA, `reader-session` for Kavita, or CWA-only `authentik-forwarded`. |
@@ -180,7 +181,7 @@ standalone Compose example accepts the same environment names.
 | `BT_SESSION_MAX_ENTRIES` | `10000` | In-memory opaque session cap. |
 | `BT_SESSION_COOKIE_NAME` | `__Host-bt-session` (HTTPS) or `bt-session` (loopback HTTP) | Plugin session cookie. It must use the `__Host-` prefix exactly when the public origin is HTTPS; the hub sets `__Host-bt-<reader>-session` per reader. |
 | `BT_IDENTITY_TRUSTED_PROXIES` | empty | Exact trusted peers for forwarded identity. |
-| `BT_AUTH_RATE_LIMIT_PER_MINUTE` | `300` | Pre-authentication attempts per observed client. Behind a reverse proxy every browser is the same observed client. |
+| `BT_AUTH_RATE_LIMIT_PER_MINUTE` | `300` | Pre-authentication attempts per observed client. Empty edge trust shares the edge's address among its browsers. |
 | `BT_AUTH_MAX_INFLIGHT_PER_CLIENT` | `2` | Concurrent pre-authentication requests per observed client, shared like the rate limit above. |
 | `BT_RATE_LIMIT_PER_MINUTE` | `300` | Successful API requests per authenticated subject. |
 | `BT_RATE_LIMIT_RETRY_AFTER` | `10` | `Retry-After` value returned on `429`. |
@@ -192,7 +193,38 @@ standalone Compose example accepts the same environment names.
 | `BT_PUBLIC_ORIGIN` | empty | Required exact HTTP(S) origin for cookie-authenticated unsafe browser writes; managed readers derive it from their per-reader public origin. |
 | `BT_ALLOW_PRIVATE_LAN` | unsupported | It does not grant browser origins; configure each exact allowed origin explicitly. |
 
-The managed proxy replaces inbound forwarding chains with the peer it observed.
+The managed proxy replaces inbound forwarding chains with one observed address.
+By default that is the immediate socket peer. To distinguish browsers behind one
+operator-controlled edge, set `BT_EDGE_TRUSTED_PROXIES` to its exact immediate
+IPv4/IPv6 peers, for example `192.0.2.8,2001:db8::8`. Bare addresses and `/32`
+or `/128` host networks are accepted; subnets, hostnames, zones and wildcards
+are rejected. The list is limited to 32 distinct peers and 4096 characters.
+Spaces between comma-separated elements are accepted; whole-value padding and
+empty elements are rejected. Validation canonicalizes and deduplicates peers.
+
+The edge must put the browser address it observed last in the final outgoing
+`X-Forwarded-For` field, preferably emitting one normalized field. Only a
+configured immediate peer may supply that value; untrusted requests keep their
+socket identity. Missing or unparseable final addresses fall back to the edge
+peer. Nginx accepts some irregular whitespace and trailing commas, so this is
+not validation of the entire forwarding chain. Reader, exact session exchange
+and ordinary API routes receive the same single address and exact User-Agent;
+standardized `Forwarded` and forwarded identity assertions are stripped.
+Custom `BT_CWA_IDENTITY_HEADER` values are retained for hub proxy restarts and
+cannot collide with managed context/credential headers such as `User-Agent`,
+`Cookie` or `X-Forwarded-For`.
+
+The setting reaches only proxies in split and standalone Compose installs, and
+the reader listeners in a hub. It grants no API or identity authority and is
+independent of `BT_EDGE_NETWORK`. Empty managed settings preserve old retained
+environments and fingerprints; nonempty canonical peers appear in plans and
+change the fingerprint. Enabling, changing or clearing it requires a fresh
+reader login and translator-session exchange. Treat this as a route change;
+`btctl reconfigure` changes providers only. Additional proxy/CDN hops and
+external edge certification require separate acceptance. See
+[ADR-021](../decisions/ADR-021-exact-edge-client-ip-trust.md) and the
+[release gates](../maintainers/release.md).
+
 Raw reader proof can reach only the exact session-exchange route. The broker
 accepts selected CWA cookies, a Kavita access bearer, or exact Kavita OIDC
 cookie chunks, validates the stock account endpoint and discards the proof.

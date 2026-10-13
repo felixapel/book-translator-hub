@@ -58,6 +58,47 @@ def dual_reader_environment() -> dict[str, str]:
 
 
 class HubConfigTests(unittest.TestCase):
+    def test_empty_edge_trust_preserves_each_reader_environment(self):
+        values = dual_reader_environment()
+        original = HubConfig.from_environment(values)
+        values["BT_EDGE_TRUSTED_PROXIES"] = ""
+        self.assertEqual(HubConfig.from_environment(values), original)
+        for reader in original.readers:
+            self.assertNotIn("BT_EDGE_TRUSTED_PROXIES", reader.environment)
+            self.assertNotIn("BT_EDGE_TRUSTED_PROXIES", reader.proxy_environment)
+
+    def test_exact_edge_trust_reaches_both_proxies_without_api_authority(self):
+        values = dual_reader_environment()
+        original = HubConfig.from_environment(values)
+        values["BT_EDGE_TRUSTED_PROXIES"] = (
+            "2001:0db8::8/128, 192.0.2.8/32,192.0.2.8"
+        )
+        configured = HubConfig.from_environment(values)
+        for reader, baseline in zip(configured.readers, original.readers):
+            self.assertEqual(reader.environment, baseline.environment)
+            self.assertEqual(reader.environment["BT_TRUSTED_PROXIES"], "127.0.0.1/32")
+            self.assertEqual(
+                reader.proxy_environment["BT_EDGE_TRUSTED_PROXIES"],
+                "192.0.2.8,2001:db8::8",
+            )
+
+    def test_invalid_edge_trust_fails_before_hub_runtime_preparation(self):
+        for value in ("192.0.2.0/24", "edge.example.test", "127.0.0.1\ninclude evil;"):
+            with self.subTest(value=value):
+                values = dual_reader_environment()
+                values["BT_EDGE_TRUSTED_PROXIES"] = value
+                with self.assertRaisesRegex(HubConfigError, "BT_EDGE_TRUSTED_PROXIES") as error:
+                    HubConfig.from_environment(values)
+                self.assertNotIn(value, str(error.exception))
+
+    def test_hub_rejects_identity_header_context_collisions_before_startup(self):
+        for header in ("User-Agent", "uSeR-aGeNt", "Cookie", "X-Forwarded-For"):
+            with self.subTest(header=header):
+                values = dual_reader_environment()
+                values["BT_CWA_IDENTITY_HEADER"] = header
+                with self.assertRaisesRegex(HubConfigError, "BT_CWA_IDENTITY_HEADER"):
+                    HubConfig.from_environment(values)
+
     def test_at_least_one_reader_must_be_enabled(self):
         with self.assertRaisesRegex(HubConfigError, "at least one"):
             HubConfig.from_environment({

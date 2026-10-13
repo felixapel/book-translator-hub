@@ -38,6 +38,7 @@ COPY auth.py btctl_core.py cache.py envconfig.py epub_export.py feedback.py glos
 COPY VERSION ./
 COPY static/loader.js static/translator.css static/translator.js ./static/
 COPY proxy/nginx-main.conf proxy/nginx.conf.template proxy/render_config.py ./proxy/
+COPY proxy/edge_trust.py proxy/header_contract.py ./proxy/
 COPY docker-entrypoint.sh ./
 RUN chmod 755 docker-entrypoint.sh
 

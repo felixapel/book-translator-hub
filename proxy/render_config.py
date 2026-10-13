@@ -12,6 +12,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
+if __package__:
+    from .edge_trust import parse_edge_trusted_proxies
+    from .header_contract import validate_reader_identity_header
+else:
+    from edge_trust import parse_edge_trusted_proxies
+    from header_contract import validate_reader_identity_header
+
 
 EX_CONFIG = 78
 _HOSTNAME_RE = re.compile(
@@ -19,7 +26,6 @@ _HOSTNAME_RE = re.compile(
 )
 _SIZE_RE = re.compile(r"^[1-9][0-9]{0,9}[kKmMgG]?$")
 _VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-_HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
 _COOKIE_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
 _PROXY_NAMESPACE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _BROWSER_CONFIG_PATH_RE = re.compile(
@@ -120,10 +126,10 @@ def _validated_version(env: Mapping[str, str], name: str) -> str:
 
 
 def _validated_header_name(env: Mapping[str, str], name: str) -> str:
-    value = _required(env, name)
-    if not _HEADER_NAME_RE.fullmatch(value):
-        raise ProxyConfigError(f"{name} must be a bounded HTTP header name")
-    return value
+    try:
+        return validate_reader_identity_header(_required(env, name))
+    except ValueError as exc:
+        raise ProxyConfigError(str(exc)) from None
 
 
 def _validated_session_cookie_name(
@@ -344,6 +350,17 @@ def _atomic_write(output_path: Path, content: str) -> None:
 
 
 def render(template_path: Path, output_path: Path, env: Mapping[str, str]) -> None:
+    try:
+        edge_peers = parse_edge_trusted_proxies(env.get("BT_EDGE_TRUSTED_PROXIES", ""))
+    except ValueError as exc:
+        raise ProxyConfigError(str(exc)) from None
+    edge_directives = ""
+    if edge_peers:
+        edge_directives = "\n    ".join([
+            *(f"set_real_ip_from {peer};" for peer in edge_peers),
+            "real_ip_header X-Forwarded-For;",
+            "real_ip_recursive off;",
+        ])
     browser_config = _validated_browser_config(env)
     reader_upstream = _validated_reader_upstream(env)
     api_upstream, _, _ = _validated_base_url(env, "BT_API_UPSTREAM")
@@ -353,6 +370,7 @@ def render(template_path: Path, output_path: Path, env: Mapping[str, str]) -> No
     )
     proxy_namespace = _validated_proxy_namespace(env)
     replacements = {
+        "${BT_EDGE_REAL_IP_DIRECTIVES}": edge_directives,
         "${BT_PROXY_NAMESPACE}": proxy_namespace,
         "${BT_BROWSER_CONFIG_PATH}": _validated_browser_config_path(env),
         "${BT_READER_UPSTREAM_ROUTING}": _reader_upstream_routing(

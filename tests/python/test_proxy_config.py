@@ -17,11 +17,14 @@ TEMPLATE = ROOT / "proxy" / "nginx.conf.template"
 
 
 class ProxyConfigRendererTests(unittest.TestCase):
-    def render(self, overrides: dict[str, str | None] | None = None):
+    def render(self, overrides: dict[str, str | None] | None = None, *, existing=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         output = Path(temporary.name) / "proxy.conf"
         browser_output = Path(temporary.name) / "browser-config.json"
+        if existing:
+            output.write_text("retained nginx configuration", encoding="utf-8")
+            browser_output.write_text("retained browser configuration", encoding="utf-8")
         env = os.environ.copy()
         env.update({
             "CWA_UPSTREAM": "http://calibre-web:8083",
@@ -55,6 +58,102 @@ class ProxyConfigRendererTests(unittest.TestCase):
             env=env,
         )
         return result, output, browser_output
+
+    def test_empty_edge_trust_keeps_socket_peer_forwarding(self):
+        for value in (None, ""):
+            with self.subTest(value=value):
+                result, output, _ = self.render({"BT_EDGE_TRUSTED_PROXIES": value})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rendered = output.read_text()
+                self.assertNotIn("set_real_ip_from", rendered)
+                self.assertNotIn("real_ip_header", rendered)
+                self.assertEqual(
+                    rendered.count("proxy_set_header X-Forwarded-For $remote_addr;"),
+                    3,
+                )
+
+    def test_exact_edge_peers_are_canonicalized_without_changing_api_authority(self):
+        result, output, _ = self.render({
+            "BT_EDGE_TRUSTED_PROXIES":
+                "2001:0db8:0:0::2/128, 192.0.2.8/32,192.0.2.8",
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rendered = output.read_text()
+        self.assertIn("set_real_ip_from 192.0.2.8;", rendered)
+        self.assertIn("set_real_ip_from 2001:db8::2;", rendered)
+        self.assertEqual(rendered.count("set_real_ip_from"), 2)
+        self.assertIn("real_ip_header X-Forwarded-For;", rendered)
+        self.assertIn("real_ip_recursive off;", rendered)
+        self.assertEqual(rendered.count("proxy_set_header X-Real-IP $remote_addr;"), 3)
+        self.assertEqual(rendered.count("proxy_set_header User-Agent $http_user_agent;"), 3)
+        self.assertEqual(rendered.count('proxy_set_header Forwarded "";'), 3)
+
+    def test_edge_trust_rejects_ambiguous_or_unbounded_authority_before_writes(self):
+        invalid = (
+            "0.0.0.0/0", "192.0.2.0/24", "2001:db8::/64", "*",
+            "edge.example.test", "unix:/tmp/edge.sock", "fe80::1%eth0",
+            "192.0.2.1,", ",192.0.2.1", "192.0.2.1,,192.0.2.2",
+            "192.0.2.1\ninclude /tmp/evil;", "192.0.2.1\t", "192.0.2.1\x7f",
+            "192.0.2.1; include /tmp/evil;", "192.0.2.1:8080", " 192.0.2.1",
+            ",".join(f"192.0.2.{i}" for i in range(1, 34)),
+            "192.0.2.1," * 500,
+        )
+        for value in invalid:
+            with self.subTest(value=value):
+                result, output, browser_output = self.render({
+                    "BT_EDGE_TRUSTED_PROXIES": value,
+                })
+                self.assertEqual(result.returncode, 78)
+                self.assertIn("BT_EDGE_TRUSTED_PROXIES", result.stderr)
+                self.assertNotIn(value, result.stderr)
+                self.assertFalse(output.exists())
+                self.assertFalse(browser_output.exists())
+
+    def test_whitespace_edge_trust_is_not_the_empty_default(self):
+        result, output, browser_output = self.render({"BT_EDGE_TRUSTED_PROXIES": " "})
+        self.assertEqual(result.returncode, 78)
+        self.assertFalse(output.exists())
+        self.assertFalse(browser_output.exists())
+
+    def test_forwarded_identity_is_stripped_on_all_three_upstream_routes(self):
+        result, output, _ = self.render({"BT_CWA_IDENTITY_HEADER": "X-Reader-Login"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for header in (
+            "X-Reader-Login", "X-BT-Subject", "X-BT-Roles",
+            "X-authentik-uid", "X-authentik-groups",
+        ):
+            self.assertEqual(output.read_text().count(f'proxy_set_header {header} "";'), 3)
+
+    def test_identity_header_cannot_collide_with_managed_context_or_credentials(self):
+        for header in (
+            "User-Agent", "uSeR-aGeNt", "Host", "Cookie", "Authorization",
+            "X-Forwarded-For", "X-Real-IP", "X-BT-Subject", "Connection",
+        ):
+            with self.subTest(header=header):
+                result, output, browser_output = self.render({"BT_CWA_IDENTITY_HEADER": header})
+                self.assertEqual(result.returncode, 78)
+                self.assertIn("BT_CWA_IDENTITY_HEADER", result.stderr)
+                self.assertFalse(output.exists())
+                self.assertFalse(browser_output.exists())
+
+    def test_maximum_exact_edge_set_accepts_duplicate_host_forms(self):
+        peers = [f"192.0.2.{index}" for index in range(1, 33)]
+        result, output, _ = self.render({
+            "BT_EDGE_TRUSTED_PROXIES": ",".join(peers + [peers[0] + "/32"]),
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.read_text().count("set_real_ip_from"), 32)
+
+    def test_invalid_security_settings_preserve_existing_outputs(self):
+        for overrides in (
+            {"BT_EDGE_TRUSTED_PROXIES": "192.0.2.0/24"},
+            {"BT_CWA_IDENTITY_HEADER": "User-Agent"},
+        ):
+            with self.subTest(overrides=overrides):
+                result, output, browser_output = self.render(overrides, existing=True)
+                self.assertEqual(result.returncode, 78)
+                self.assertEqual(output.read_text(), "retained nginx configuration")
+                self.assertEqual(browser_output.read_text(), "retained browser configuration")
 
     def test_valid_contract_renders_only_validated_values(self):
         result, output, browser_output = self.render()

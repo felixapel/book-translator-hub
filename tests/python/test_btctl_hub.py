@@ -156,6 +156,60 @@ class HubBtctlTests(unittest.TestCase):
     def tearDown(self):
         self.root_patch.stop()
 
+    def test_empty_edge_trust_preserves_retained_environment_and_fingerprint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            values = hub_values(Path(directory))
+            original = HubInstallConfig.from_mapping(values, IDENTITY)
+            values["BT_EDGE_TRUSTED_PROXIES"] = ""
+            configured = HubInstallConfig.from_mapping(values, IDENTITY)
+            self.assertEqual(configured.environment, original.environment)
+            self.assertEqual(
+                HubPlan.from_config(configured).config_fingerprint,
+                HubPlan.from_config(original).config_fingerprint,
+            )
+            self.assertNotIn("BT_EDGE_TRUSTED_PROXIES", configured.environment)
+
+    def test_custom_reader_identity_header_survives_retained_hub_reload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            values = hub_values(Path(directory))
+            original = HubInstallConfig.from_mapping(values, IDENTITY)
+            values["BT_CWA_IDENTITY_HEADER"] = "X-Reader-Login"
+            configured = HubInstallConfig.from_mapping(values, IDENTITY)
+            self.assertEqual(configured.environment["BT_CWA_IDENTITY_HEADER"], "X-Reader-Login")
+            restored = type(configured.runtime).from_environment(configured.environment)
+            for reader in restored.readers:
+                self.assertEqual(reader.proxy_environment["BT_CWA_IDENTITY_HEADER"], "X-Reader-Login")
+                self.assertNotIn("BT_CWA_IDENTITY_HEADER", reader.environment)
+            self.assertNotEqual(
+                HubPlan.from_config(configured).config_fingerprint,
+                HubPlan.from_config(original).config_fingerprint,
+            )
+            values["BT_CWA_IDENTITY_HEADER"] = "Remote-User"
+            self.assertEqual(
+                HubInstallConfig.from_mapping(values, IDENTITY).environment,
+                original.environment,
+            )
+
+    def test_edge_trust_is_canonical_in_retained_hub_environment_and_plan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            values = hub_values(Path(directory))
+            baseline = HubPlan.from_config(HubInstallConfig.from_mapping(values, IDENTITY))
+            plans = []
+            for peers in ("2001:0db8::8/128, 192.0.2.8/32", "192.0.2.8,2001:db8::8"):
+                values["BT_EDGE_TRUSTED_PROXIES"] = peers
+                config = HubInstallConfig.from_mapping(values, IDENTITY)
+                self.assertEqual(
+                    config.environment["BT_EDGE_TRUSTED_PROXIES"],
+                    "192.0.2.8,2001:db8::8",
+                )
+                plans.append(HubPlan.from_config(config))
+            self.assertEqual(plans[0].config_fingerprint, plans[1].config_fingerprint)
+            self.assertNotEqual(plans[0].config_fingerprint, baseline.config_fingerprint)
+            self.assertEqual(
+                plans[0].to_dict()["environment"]["BT_EDGE_TRUSTED_PROXIES"],
+                "192.0.2.8,2001:db8::8",
+            )
+
     def test_plan_is_schema_three_and_never_contains_provider_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
             config = HubInstallConfig.from_mapping(hub_values(Path(directory)), IDENTITY)

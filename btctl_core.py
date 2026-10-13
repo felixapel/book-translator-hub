@@ -21,6 +21,9 @@ from pathlib import Path
 from typing import Mapping, Protocol
 from urllib.parse import urlsplit
 
+from proxy.edge_trust import parse_edge_trusted_proxies
+from proxy.header_contract import validate_reader_identity_header
+
 
 _SEMVER_RE = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
@@ -31,7 +34,6 @@ _ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _NETWORK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 _CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,127}$")
-_HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
 _HOSTNAME_RE = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$"
 )
@@ -76,29 +78,6 @@ KAVITA_0_9_1_4_IMAGE_ID = (
     "sha256:7760764f85ec572c5ed9d9ae3b8269dacfc4cb40fdd3b76b24810f98dcb3447c"
 )
 KAVITA_0_9_1_4_OCI_REVISION = "d77d956b9551227d8be2ee488b08f14aa3a341e5"
-
-_MANAGED_PROXY_HEADERS = frozenset(
-    {
-        "authorization",
-        "connection",
-        "content-length",
-        "cookie",
-        "forwarded",
-        "host",
-        "transfer-encoding",
-        "upgrade",
-        "x-authentik-groups",
-        "x-authentik-uid",
-        "x-bt-roles",
-        "x-bt-subject",
-        "x-forwarded-for",
-        "x-forwarded-host",
-        "x-forwarded-port",
-        "x-forwarded-proto",
-        "x-real-ip",
-    }
-)
-
 
 class ConfigError(ValueError):
     """An installation value is ambiguous, unsafe, or incomplete."""
@@ -454,16 +433,10 @@ def _exact_peer(value: object) -> str:
 
 
 def _cwa_identity_header(value: object) -> str:
-    cleaned = _clean_value(value, "BT_CWA_IDENTITY_HEADER")
-    if not cleaned.isascii() or not _HEADER_NAME_RE.fullmatch(cleaned):
-        raise ConfigError(
-            "BT_CWA_IDENTITY_HEADER must be one bounded HTTP header name"
-        )
-    if cleaned.casefold() in _MANAGED_PROXY_HEADERS:
-        raise ConfigError(
-            "BT_CWA_IDENTITY_HEADER conflicts with a proxy-managed security header"
-        )
-    return cleaned
+    try:
+        return validate_reader_identity_header(value)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from None
 
 
 def _absolute_dir(value: object, name: str) -> str:
@@ -684,6 +657,7 @@ class InstallConfig:
     llm_fallback_api_key: str = field(repr=False)
     llm_fallback_custom_endpoint: str
     llm_fallback_custom_api_key: str = field(repr=False)
+    edge_trusted_proxies: tuple[str, ...] = ()
 
     @classmethod
     def from_mapping(
@@ -856,6 +830,12 @@ class InstallConfig:
         edge_network = _clean_value(
             values.get("BT_EDGE_NETWORK", ""), "BT_EDGE_NETWORK", allow_empty=True
         )
+        try:
+            edge_trusted_proxies = parse_edge_trusted_proxies(
+                values.get("BT_EDGE_TRUSTED_PROXIES", "")
+            )
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from None
         if ingress_mode == "published":
             if proxy_port is None:
                 raise ConfigError("BT_PROXY_PORT is required for published ingress")
@@ -1098,6 +1078,7 @@ class InstallConfig:
             compatibility_tier=compatibility,
             cwa_identity_header=cwa_identity_header,
             edge_network=edge_network,
+            edge_trusted_proxies=edge_trusted_proxies,
             state_dir=state_dir,
             data_dir=data_dir,
             backup_dir=backup_dir,
@@ -1227,6 +1208,8 @@ class InstallConfig:
         }
         if self.reader_type == "cwa":
             values["CWA_UPSTREAM"] = self.reader_upstream
+        if self.edge_trusted_proxies:
+            values["BT_EDGE_TRUSTED_PROXIES"] = ",".join(self.edge_trusted_proxies)
         return values
 
     def public_contract(self) -> dict[str, object]:
@@ -1289,6 +1272,8 @@ class InstallConfig:
             )
         if self.reader_image_id:
             common["reader_image_id"] = self.reader_image_id
+        if self.edge_trusted_proxies:
+            common["edge_trusted_proxies"] = list(self.edge_trusted_proxies)
         if self.reader_type == "cwa":
             # This projection deliberately remains byte-for-byte compatible
             # with schema-1 CWA fingerprints.

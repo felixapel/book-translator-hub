@@ -291,6 +291,57 @@ class InstallConfigTests(unittest.TestCase):
         self.assertNotIn("BT_IMAGE", api)
         self.assertNotIn("BT_ALLOW_INSECURE_AUTH", api)
 
+    def test_empty_edge_trust_preserves_retained_install_fingerprint_and_environments(self):
+        original = InstallConfig.from_mapping(self.base, self.identity)
+        explicit_empty = InstallConfig.from_mapping(
+            {**self.base, "BT_EDGE_TRUSTED_PROXIES": ""}, self.identity
+        )
+        self.assertNotIn("edge_trusted_proxies", explicit_empty.public_contract())
+        self.assertNotIn("BT_EDGE_TRUSTED_PROXIES", explicit_empty.api_environment())
+        self.assertNotIn("BT_EDGE_TRUSTED_PROXIES", explicit_empty.proxy_environment())
+        self.assertEqual(original.public_contract(), explicit_empty.public_contract())
+        self.assertEqual(
+            DeploymentPlan.from_config(original).config_fingerprint,
+            DeploymentPlan.from_config(explicit_empty).config_fingerprint,
+        )
+
+    def test_edge_trust_is_canonical_proxy_only_authority_in_plan_and_fingerprint(self):
+        configured = InstallConfig.from_mapping({
+            **self.base,
+            "BT_EDGE_TRUSTED_PROXIES": "2001:0db8::2/128, 192.0.2.8/32,192.0.2.8",
+        }, self.identity)
+        equivalent = InstallConfig.from_mapping({
+            **self.base, "BT_EDGE_TRUSTED_PROXIES": "192.0.2.8,2001:db8::2",
+        }, self.identity)
+        default = InstallConfig.from_mapping(self.base, self.identity)
+        self.assertEqual(configured.proxy_environment()["BT_EDGE_TRUSTED_PROXIES"],
+                         "192.0.2.8,2001:db8::2")
+        self.assertNotIn("BT_EDGE_TRUSTED_PROXIES", configured.api_environment())
+        self.assertEqual(configured.api_environment(), default.api_environment())
+        self.assertEqual(configured.public_contract()["edge_trusted_proxies"],
+                         ["192.0.2.8", "2001:db8::2"])
+        selected_plan = DeploymentPlan.from_config(configured)
+        self.assertEqual(selected_plan.proxy_environment["BT_EDGE_TRUSTED_PROXIES"],
+                         "192.0.2.8,2001:db8::2")
+        self.assertEqual(selected_plan.config_fingerprint,
+                         DeploymentPlan.from_config(equivalent).config_fingerprint)
+        self.assertNotEqual(selected_plan.config_fingerprint,
+                            DeploymentPlan.from_config(default).config_fingerprint)
+
+    def test_edge_trust_rejects_broad_malformed_or_unbounded_peers(self):
+        invalid = (
+            "192.0.2.0/24", "::/0", "edge.example.test", "fe80::1%eth0",
+            "192.0.2.1,", "192.0.2.1\n", "192.0.2.1\t", "192.0.2.1\x7f",
+            "192.0.2.1; include /tmp/evil;", "unix:/tmp/edge.sock",
+            ",".join(f"192.0.2.{i}" for i in range(1, 34)),
+        )
+        for value in invalid:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ConfigError, "BT_EDGE_TRUSTED_PROXIES"):
+                    InstallConfig.from_mapping(
+                        {**self.base, "BT_EDGE_TRUSTED_PROXIES": value}, self.identity
+                    )
+
     def test_adaptive_batch_controls_are_validated_and_reach_split_roles(self):
         values = {
             **self.base,
@@ -555,6 +606,8 @@ class InstallConfigTests(unittest.TestCase):
             "Cookie",
             "X-BT-Subject",
             "X-Forwarded-For",
+            "User-Agent",
+            "uSeR-aGeNt",
         ):
             with self.subTest(header=header), self.assertRaisesRegex(
                 ConfigError, "BT_CWA_IDENTITY_HEADER"

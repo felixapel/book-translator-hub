@@ -146,6 +146,15 @@ teardown on unsupported routes. To reuse a compatible local Chromium instead
 of Playwright's managed headless shell, set
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/absolute/path/to/chromium`.
 
+The required Docker gate also runs `./scripts/edge-trust-smoke.sh <image>`.
+It uses the shipped nginx and real API instances with disposable CWA/Kavita
+account fixtures and an offline provider. Raw socket cases preserve duplicate
+XFF fields and bind trusted/untrusted loopback peers. A separate Chromium flow
+uses a controlled immediate edge and real native exchange/translation routes
+for strong-session, navigation and fresh-session evidence. Install the same
+locked npm dependencies and Chromium before running it. Its test-only reader
+DOM is separate from physical stock-reader acceptance.
+
 ## Updating Dependency Locks
 
 `requirements/requirements.in` records runtime intent.
