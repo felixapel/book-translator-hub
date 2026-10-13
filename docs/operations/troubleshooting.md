@@ -303,12 +303,19 @@ reset when the API process restarts.
 
 A `429` whose body has `"scope": "auth_admission"` comes from the pre-auth
 limiter, which keys on the address the injection proxy observes. Behind a
-reverse proxy that is the proxy's address for every browser, so all readers
+reverse proxy with empty `BT_EDGE_TRUSTED_PROXIES`, that is the proxy's address
+for every browser, so all readers
 share `BT_AUTH_RATE_LIMIT_PER_MINUTE` and `BT_AUTH_MAX_INFLIGHT_PER_CLIENT`
 (`outcomes.auth_rate_limited` in `/metrics`). Raise them for the expected
 number of readers, and limit which clients can reach the edge, for example with
 its own authentication, so unauthenticated traffic cannot spend the shared
-budget. `"scope": "api_admission"` is the per-reader quota
+budget. For one operator-controlled immediate edge, the optional exact-peer
+[`BT_EDGE_TRUSTED_PROXIES` contract](../reference/configuration.md#authentication-and-network-settings)
+allows separate observed browser keys. Never authorize a Docker subnet or an
+additional proxy chain through it. Enabling, changing or clearing this route
+setting changes strong-session address binding: log into the reader again and
+exchange a fresh translator session. Provider-only `btctl reconfigure` does not
+apply route changes. `"scope": "api_admission"` is the per-reader quota
 (`BT_RATE_LIMIT_PER_MINUTE`).
 
 For an RPM-limited cloud model, raise `BT_BATCH_SIZE` gradually and use a

@@ -93,6 +93,16 @@ def _runtime_environment(values: Mapping[str, str], runtime: HubConfig) -> dict[
             or name.startswith("BT_KAVITA_MAX_")
         )
     }
+    # Retain only the canonical nonempty proxy setting. It grants no API trust
+    # and omission preserves fingerprints of existing empty-default installs.
+    edge_trusted_proxies = runtime.readers[0].proxy_environment.get(
+        "BT_EDGE_TRUSTED_PROXIES"
+    )
+    if edge_trusted_proxies:
+        environment["BT_EDGE_TRUSTED_PROXIES"] = edge_trusted_proxies
+    reader_identity_header = runtime.readers[0].proxy_environment["BT_CWA_IDENTITY_HEADER"]
+    if reader_identity_header != "Remote-User":
+        environment["BT_CWA_IDENTITY_HEADER"] = reader_identity_header
     environment["BT_ROLE"] = "hub"
     environment["BT_MAX_CONCURRENT"] = values.get("BT_MAX_CONCURRENT", "2")
     environment["BT_MAX_UPSTREAM_INFLIGHT"] = values.get(

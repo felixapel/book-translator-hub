@@ -55,6 +55,7 @@ npm test
 npm run test:e2e
 docker build -t "cwa-translate:${VERSION}-candidate" .
 ./scripts/container-smoke.sh "cwa-translate:${VERSION}-candidate" release
+./scripts/edge-trust-smoke.sh "cwa-translate:${VERSION}-candidate"
 ./scripts/btctl-lifecycle-smoke.sh "cwa-translate:${VERSION}-candidate" release
 ./scripts/hub-container-smoke.sh "cwa-translate:${VERSION}-candidate" release-hub
 ./scripts/btctl-bootstrap-smoke.sh release

@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlsplit
 
+from proxy.edge_trust import parse_edge_trusted_proxies
+from proxy.header_contract import validate_reader_identity_header
 from proxy.render_config import ProxyConfigError, render_outputs
 
 
@@ -351,6 +353,16 @@ class HubConfig:
         if not enabled:
             raise HubConfigError("at least one reader must be enabled")
 
+        try:
+            edge_trusted_proxies = parse_edge_trusted_proxies(
+                values.get("BT_EDGE_TRUSTED_PROXIES", "")
+            )
+            reader_identity_header = validate_reader_identity_header(
+                values.get("BT_CWA_IDENTITY_HEADER", "Remote-User")
+            )
+        except ValueError as exc:
+            raise HubConfigError(str(exc)) from None
+
         concurrency = _allocations(values, enabled, "BT_MAX_CONCURRENT", 2)
         upstream_inflight = _allocations(
             values, enabled, "BT_MAX_UPSTREAM_INFLIGHT", 2
@@ -479,13 +491,15 @@ class HubConfig:
                 "BT_SESSION_COOKIE_NAME": environment["BT_SESSION_COOKIE_NAME"],
                 "BT_BROWSER_CONFIG_PATH": f"/tmp/nginx/browser-config-{reader}.json",
                 "BT_CWA_MAX_BODY_SIZE": values.get("BT_CWA_MAX_BODY_SIZE", "2g"),
-                "BT_CWA_IDENTITY_HEADER": values.get(
-                    "BT_CWA_IDENTITY_HEADER", "Remote-User"
-                ),
+                "BT_CWA_IDENTITY_HEADER": reader_identity_header,
                 "BT_UI_VERSION": values.get("BT_UI_VERSION", "dev"),
                 "BT_BATCH_SIZE": str(batch_size),
                 "BT_CLIENT_PREFETCH_GAP_MS": str(client_prefetch_gap_ms),
             }
+            if edge_trusted_proxies:
+                proxy_environment["BT_EDGE_TRUSTED_PROXIES"] = ",".join(
+                    edge_trusted_proxies
+                )
             runtimes.append(
                 ReaderRuntime(
                     name=reader,

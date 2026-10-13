@@ -7,16 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional `BT_EDGE_TRUSTED_PROXIES` trusts at most 32 exact operator-controlled immediate edge IPs at nginx, so browsers behind that edge have separate pre-auth admission keys. Empty configuration keeps socket-peer forwarding and existing managed fingerprints. Reader/API/session routes share one address and exact User-Agent; identity assertions are consistently stripped. Enabling, changing or clearing trust requires a new reader login and translator session. Split, hub and standalone Compose inputs are supported, with actual-nginx and native Chromium contract tests; external proxy and physical stock-reader acceptance remain release gates.
+
 ### Changed
 
 - Removed the overlay's unused streaming client code. The bundled overlay translates through `/translate/batch`; `/translate/stream` remains an API endpoint. The README, architecture and Community Applications guides now describe that behavior, and the Community Applications guide no longer contradicts its own boundary: the profile proxies CWA only and does not publish API port `8390`.
-- Documented that behind an operator reverse proxy all readers share one pre-auth admission budget (`BT_AUTH_RATE_LIMIT_PER_MINUTE`, `BT_AUTH_MAX_INFLIGHT_PER_CLIENT`), in ADR-006, troubleshooting and the configuration reference. The configuration reference now also lists `BT_SESSION_COOKIE_NAME`, `BT_API_PORT` and the glossary/feedback limits, and states that HTTP translation requests do not use singleflight coalescing. The README and architecture guide no longer claim that the server can enable browser persistence of translated text.
+- Documented that behind an operator reverse proxy with empty edge trust all readers share one pre-auth admission budget (`BT_AUTH_RATE_LIMIT_PER_MINUTE`, `BT_AUTH_MAX_INFLIGHT_PER_CLIENT`), in ADR-006, troubleshooting and the configuration reference. The configuration reference now also lists `BT_SESSION_COOKIE_NAME`, `BT_API_PORT` and the glossary/feedback limits, and states that HTTP translation requests do not use singleflight coalescing. The README and architecture guide no longer claim that the server can enable browser persistence of translated text.
 - `/stats` no longer prunes. It ran cache expiry and the full cap scan as a write transaction on every uncached call, which any authenticated reader could repeat through a rate-limit-exempt route. Retention still runs on the write watermark, and `/stats` counts only unexpired rows, matching cache reads.
 - `/translate` and `/translate/stream` load the book glossary once per request instead of twice, and a cache lookup probes the single-text contract once when it equals the one-paragraph batch contract.
 - Startup logs a warning when `BT_LOCAL_URL` resolves only to public addresses, because the reader labels that provider local and uses it as a fallback without remote-fallback consent.
 
 ### Fixed
 
+- Managed hub configuration retains a custom CWA login header across restarts and includes it in the deployment fingerprint. All proxy routes strip that assertion; shared validation rejects names that collide with managed context or credentials, including `User-Agent`.
 - A one-paragraph translation group is cached under a contract that includes the book glossary. The first visible paragraph is such a group, so adding or changing a glossary term previously kept serving its cached pre-glossary translation, and translations made with a glossary were stored under the no-glossary key. Entries already stored that way remain reachable only if the book's glossary is emptied again.
 - `/translate/stream` with an Anthropic-protocol provider (Anthropic, MiniMax) no longer waits for a second upstream slot while holding the first. With `BT_MAX_UPSTREAM_INFLIGHT=1` every such request failed with `work_budget_exhausted`, and two concurrent requests blocked each other until the queue timeout.
 - A provider stream that fails after sending part of a translation now ends with `provider_stream_interrupted` instead of appending a complete fallback translation to the partial text and caching the result. Failures before the first delta still use an eligible fallback, and HTTP failures follow the same retry, fallback and `provider_rate_limited` policy as non-streamed calls.
