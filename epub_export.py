@@ -8,36 +8,49 @@ chapter) so the user can keep the translated chapter offline.
 No EPUB is ever parsed here — output only, so there is no zip-slip or
 entity-expansion surface. All text is XML-escaped on write.
 """
+import re
 import uuid
 import zipfile
 from io import BytesIO
 from xml.sax.saxutils import escape
 
-# Best-effort target-language names (as sent by the reader UI) to BCP47
-# codes for the OPF dc:language element. Unknown names fall back to "en";
-# the code selects only metadata, never rendering behaviour.
+# Target-language names (the server's VALID_LANGUAGES) to BCP 47 tags for
+# dc:language and the chapter's lang attributes. The server validates the
+# name first; an unknown name can only reach here from a direct caller.
 LANGUAGE_CODES = {
-    "English": "en",
-    "Spanish": "es",
-    "French": "fr",
-    "German": "de",
-    "Portuguese": "pt",
-    "Chinese": "zh",
-    "Chinese (Traditional)": "zh-Hant",
-    "Japanese": "ja",
-    "Korean": "ko",
-    "Russian": "ru",
-    "Arabic": "ar",
-    "Hindi": "hi",
-    "Italian": "it",
-    "Dutch": "nl",
-    "Polish": "pl",
-    "Turkish": "tr",
-    "Ukrainian": "uk",
-    "Vietnamese": "vi",
-    "Thai": "th",
-    "Indonesian": "id",
+    "Afrikaans": "af", "Albanian": "sq", "Amharic": "am", "Arabic": "ar",
+    "Aymara": "ay", "Basque": "eu", "Bengali": "bn", "Bosnian": "bs",
+    "Bulgarian": "bg", "Burmese": "my", "Catalan": "ca", "Cebuano": "ceb",
+    "Chewa": "ny", "Chinese": "zh", "Chinese (Traditional)": "zh-Hant",
+    "Croatian": "hr", "Czech": "cs", "Danish": "da", "Dutch": "nl",
+    "English": "en", "Esperanto": "eo", "Estonian": "et", "Finnish": "fi",
+    "French": "fr", "Gaelic": "gd", "Galician": "gl", "Ganda": "lg",
+    "German": "de", "Greek": "el", "Guarani": "gn", "Gujarati": "gu",
+    "Hausa": "ha", "Hawaiian": "haw", "Hebrew": "he", "Hindi": "hi",
+    "Hungarian": "hu", "Icelandic": "is", "Igbo": "ig", "Indonesian": "id",
+    "Italian": "it", "Japanese": "ja", "Javanese": "jv", "Kannada": "kn",
+    "Kazakh": "kk", "Khmer": "km", "Korean": "ko", "Kyrgyz": "ky",
+    "Lao": "lo", "Latin": "la", "Latvian": "lv", "Lingala": "ln",
+    "Lithuanian": "lt", "Macedonian": "mk", "Maithili": "mai",
+    "Malagasy": "mg", "Malay": "ms", "Malayalam": "ml", "Maori": "mi",
+    "Marathi": "mr", "Mongolian": "mn", "Nahuatl": "nah", "Navajo": "nv",
+    "Nepali": "ne", "Norwegian": "no", "Odia": "or", "Oromo": "om",
+    "Pashto": "ps", "Persian": "fa", "Polish": "pl", "Portuguese": "pt",
+    "Punjabi": "pa", "Quechua": "qu", "Romanian": "ro", "Russian": "ru",
+    "Samoan": "sm", "Serbian": "sr", "Shona": "sn", "Sindhi": "sd",
+    "Sinhala": "si", "Slovak": "sk", "Slovenian": "sl", "Somali": "so",
+    "Spanish": "es", "Sundanese": "su", "Swahili": "sw", "Swedish": "sv",
+    "Tagalog": "tl", "Tajik": "tg", "Tamil": "ta", "Telugu": "te",
+    "Thai": "th", "Tibetan": "bo", "Turkish": "tr", "Turkmen": "tk",
+    "Ukrainian": "uk", "Urdu": "ur", "Uzbek": "uz", "Vietnamese": "vi",
+    "Welsh": "cy", "Xhosa": "xh", "Yoruba": "yo", "Zulu": "zu",
 }
+
+# Characters XML 1.0 cannot represent at all, even escaped. Translated text
+# may carry them from the source book; the EPUB drops them so every document
+# stays well-formed.
+_XML_INVALID_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
 
 MAX_TITLE_CHARS = 200
 
@@ -66,9 +79,10 @@ def build_epub(
     count, per-paragraph and total characters) are enforced by the server
     endpoint per repo conventions, not here.
     """
-    if not isinstance(title, str) or not title.strip():
+    if isinstance(title, str):
+        title = _XML_INVALID_RE.sub("", title).strip()
+    if not isinstance(title, str) or not title:
         raise ValueError("'title' must be a non-empty string")
-    title = title.strip()
     if len(title) > MAX_TITLE_CHARS:
         raise ValueError(
             f"'title' exceeds the {MAX_TITLE_CHARS}-character limit"
@@ -77,7 +91,7 @@ def build_epub(
         raise ValueError("'paragraphs' must be a non-empty list")
     if not all(isinstance(paragraph, str) for paragraph in paragraphs):
         raise ValueError("All 'paragraphs' entries must be strings")
-    bodies = [paragraph.strip() for paragraph in paragraphs]
+    bodies = [_XML_INVALID_RE.sub("", paragraph).strip() for paragraph in paragraphs]
     bodies = [body for body in bodies if body]
     if not bodies:
         raise ValueError("'paragraphs' must contain at least one non-empty entry")
@@ -138,7 +152,7 @@ def build_epub(
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" '
         '"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">\n'
-        '<html xmlns="http://www.w3.org/1999/xhtml">\n'
+        f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{language}" lang="{language}">\n'
         "<head>\n"
         f"<title>{esc_title}</title>\n"
         "</head>\n"

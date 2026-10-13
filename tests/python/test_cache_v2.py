@@ -131,6 +131,27 @@ class CacheV2Tests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(remaining, 0)
 
+    def test_cached_reasoning_block_reads_as_a_miss(self) -> None:
+        leaked = "<think>The user wants Spanish.</think>\n\nHola"
+        self.store.put("hello", "English", "Spanish", leaked, scope())
+        self.store.put(
+            "<think>Remember.</think> Bye", "English", "Spanish",
+            "<think>Recuerda.</think> Adiós", scope(),
+        )
+
+        self.assertIsNone(self.store.get("hello", "English", "Spanish", scope()))
+        self.assertEqual(
+            self.store.get_many(
+                [
+                    ("hello", "English", "Spanish", scope()),
+                    ("<think>Remember.</think> Bye", "English", "Spanish", scope()),
+                ],
+                record_hit=True,
+            ),
+            [None, "<think>Recuerda.</think> Adiós"],
+        )
+        self.assertEqual(self.store.stats()["total_hits"], 1)
+
     def test_get_many_aligns_results_and_hashes_duplicates_once(self) -> None:
         self.store.put("hello", "English", "Spanish", "hola", scope())
         self.store.put("bye", "English", "Spanish", "adiós", scope())
@@ -159,6 +180,25 @@ class CacheV2Tests(unittest.TestCase):
             "SELECT COUNT(*) FROM translations_v2"
         ).fetchone()[0]
         self.assertEqual(remaining, 0)
+
+    def test_stats_report_live_rows_without_writing(self) -> None:
+        self.store.put("old", "English", "Spanish", "viejo", scope())
+        self.clock.advance(days=31)
+        self.store.put(
+            "new", "English", "French", "nouveau", scope(context_hash="ctx-b")
+        )
+        conn = self.store.connection()
+        changes_before = conn.total_changes
+
+        stats = self.store.stats()
+
+        self.assertEqual(stats["total_entries"], 1)
+        self.assertEqual(stats["language_pairs"], {"English→French": 1})
+        self.assertEqual(conn.total_changes, changes_before)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM translations_v2").fetchone()[0],
+            2,
+        )
 
     def test_hard_cap_is_never_exceeded(self) -> None:
         for index in range(6):

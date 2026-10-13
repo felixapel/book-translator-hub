@@ -23,6 +23,9 @@ log = logging.getLogger("book-translator.glossary")
 GLOSSARY_TABLE = "glossary_v1"
 GLOSSARY_MAX_ENTRIES = env_int("BT_GLOSSARY_MAX_ENTRIES", 200)
 GLOSSARY_MAX_TERM_CHARS = env_int("BT_GLOSSARY_MAX_TERM_CHARS", 200)
+# Book ids are client metadata, so the per-book cap alone would let one
+# reader grow the table without bound by naming new books.
+GLOSSARY_MAX_TENANT_ENTRIES = env_int("BT_GLOSSARY_MAX_TENANT_ENTRIES", 5000)
 
 _init_lock = threading.Lock()
 
@@ -106,15 +109,31 @@ def put_entry(tenant: str, book_id: str, source: str, target: str) -> dict[str, 
     _ensure_init()
     conn = _connect()
     try:
+        # Count and write in one write transaction so concurrent requests
+        # cannot both pass the caps.
+        conn.execute("BEGIN IMMEDIATE")
+        tenant_hash, book_hash = _hash(tenant), _hash(book_id)
+        source_norm = source_text.casefold()
         count = conn.execute(
             f"""SELECT COUNT(*) FROM {GLOSSARY_TABLE}
                 WHERE tenant_hash = ? AND book_hash = ?
                 AND source_norm != ?""",
-            (_hash(tenant), _hash(book_id), source_text.casefold()),
+            (tenant_hash, book_hash, source_norm),
         ).fetchone()[0]
         if count >= GLOSSARY_MAX_ENTRIES:
             raise ValueError(
                 f"glossary exceeds the {GLOSSARY_MAX_ENTRIES}-entry limit"
+            )
+        tenant_count = conn.execute(
+            f"""SELECT COUNT(*) FROM {GLOSSARY_TABLE}
+                WHERE tenant_hash = ?
+                AND NOT (book_hash = ? AND source_norm = ?)""",
+            (tenant_hash, book_hash, source_norm),
+        ).fetchone()[0]
+        if tenant_count >= GLOSSARY_MAX_TENANT_ENTRIES:
+            raise ValueError(
+                "glossary exceeds the "
+                f"{GLOSSARY_MAX_TENANT_ENTRIES}-entry limit across all books"
             )
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
@@ -127,9 +146,9 @@ def put_entry(tenant: str, book_id: str, source: str, target: str) -> dict[str, 
                               target_text = excluded.target_text,
                               updated_at = excluded.updated_at""",
             (
-                _hash(tenant),
-                _hash(book_id),
-                source_text.casefold(),
+                tenant_hash,
+                book_hash,
+                source_norm,
                 source_text,
                 target_text,
                 now,
@@ -137,6 +156,9 @@ def put_entry(tenant: str, book_id: str, source: str, target: str) -> dict[str, 
             ),
         )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
     return {"source": source_text, "target": target_text}

@@ -813,6 +813,136 @@ async function assertOfflineResilience() {
     offDom.window.close();
 }
 
+async function assertLegacyReasoningCacheIsRefreshed() {
+    // Fixed keys from the pre-sanitization browser cache contract at 2.4.2.
+    // A release must not restore provider reasoning from that cache, while
+    // literal <think> source text must still survive a fresh translation.
+    const cases = [
+        {
+            source: 'The house is red.',
+            legacyKey: '0u27ss40guueds',
+            legacyTranslation: '<think>The user wants Spanish.</think>\n\nLa casa es roja.',
+            translation: 'La casa es roja.'
+        },
+        {
+            source: '<think>Remember me.</think> She closed the notebook.',
+            legacyKey: '07jd59p1pbi8v3',
+            legacyTranslation: '<think>Recuérdame.</think> Cerró el cuaderno.',
+            translation: '<think>Recuérdame.</think> Cerró el cuaderno.'
+        }
+    ];
+    for (const scenario of cases) {
+        const cacheDom = new JSDOM(`<!DOCTYPE html><html><body>
+          <main class="book-container">
+            <div class="book-content" data-bt-book-language="en"><p></p></div>
+          </main>
+        </body></html>`, {
+            url: 'https://kavita.example.test/library/7/series/42/book/99',
+            runScripts: 'dangerously'
+        });
+        try {
+            const win = cacheDom.window;
+            const paragraph = win.document.querySelector('p');
+            paragraph.textContent = scenario.source;
+            paragraph.getBoundingClientRect = () => ({
+                width: 100, height: 20, left: 0, top: 0
+            });
+            win.BOOK_TRANSLATOR = {
+                apiUrl: '/bt-api', authMode: 'reader_session',
+                credentials: 'same-origin', readerType: 'kavita',
+                readerVersion: '0.9.0.2',
+                readerContractVersion: 'kavita-0.9.0.2-epub-v1',
+                persistCache: true
+            };
+            win.localStorage.setItem('bt_lang', 'Spanish');
+            win.localStorage.setItem('bt_prefetch', '0');
+            win.localStorage.setItem('bt_cache_v3_Spanish', JSON.stringify({
+                [scenario.legacyKey]: scenario.legacyTranslation
+            }));
+            win.requestAnimationFrame = cb => setTimeout(cb, 0);
+            let translationRequests = 0;
+            win.fetch = async url => {
+                const policy = String(url).endsWith('/provider-policy');
+                if (!policy) {
+                    assert(String(url).endsWith('/translate/batch'));
+                    translationRequests += 1;
+                }
+                return {
+                    ok: true, status: 200,
+                    json: async () => policy
+                        ? { primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }
+                        : { translations: [scenario.translation] },
+                    headers: { get: () => null }
+                };
+            };
+            const script = win.document.createElement('script');
+            script.textContent = code;
+            win.document.body.appendChild(script);
+            await activateReader(win);
+            const deadline = Date.now() + 3000;
+            while (!paragraph.querySelector('.bt-translation')
+                    && Date.now() < deadline) await wait(10);
+            assert.strictEqual(translationRequests, 1,
+                'Pre-sanitization persisted rows must be refreshed through the backend');
+            assert.strictEqual(paragraph.querySelector('.bt-translation')?.textContent,
+                scenario.translation, 'Only the fresh translation may be rendered');
+            assert.strictEqual(win.localStorage.getItem('bt_cache_v3_Spanish'), null,
+                'Pre-sanitization text must not remain available for EPUB export');
+            win.dispatchEvent(new win.Event('pagehide'));
+            const saved = JSON.parse(win.localStorage.getItem('bt_cache_v4_Spanish'));
+            assert.deepStrictEqual(Object.values(saved), [scenario.translation],
+                'Opt-in persistence must retain fresh translations including literal tags');
+        } finally {
+            cacheDom.window.close();
+        }
+    }
+}
+
+async function assertLegacyIndexedDbIsPurged() {
+    // The removed IndexedDB layer was never evicted or cleared, and it holds
+    // translated book text. The overlay deletes it on load and never opens
+    // IndexedDB again, even with opt-in persistence.
+    const idbDom = new JSDOM(`<!DOCTYPE html><html><body>
+      <main class="book-container">
+        <div class="book-content" data-bt-book-language="en"><p>Stored paragraph.</p></div>
+      </main>
+    </body></html>`, {
+        url: 'https://kavita.example.test/library/7/series/42/book/99',
+        runScripts: 'dangerously'
+    });
+    const opened = [];
+    const deleted = [];
+    idbDom.window.indexedDB = {
+        open: name => { opened.push(name); return {}; },
+        deleteDatabase: name => { deleted.push(name); return {}; }
+    };
+    idbDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api',
+        authMode: 'reader_session',
+        credentials: 'same-origin',
+        readerType: 'kavita',
+        readerVersion: '0.9.0.2',
+        readerContractVersion: 'kavita-0.9.0.2-epub-v1',
+        persistCache: true
+    };
+    idbDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    idbDom.window.fetch = async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+        headers: { get: () => null }
+    });
+    const script = idbDom.window.document.createElement('script');
+    script.textContent = code;
+    idbDom.window.document.body.appendChild(script);
+    await wait(100);
+    assert.deepStrictEqual(deleted, ['BookTranslatorDB'],
+        'The legacy IndexedDB translation cache must be deleted on load');
+    assert.deepStrictEqual(opened, [],
+        'The overlay must not open IndexedDB');
+    idbDom.window.close();
+}
+
 async function assertManagedLoaderContract() {
     const loaderDom = new JSDOM(
         '<!DOCTYPE html><html><head></head><body></body></html>',
@@ -2073,6 +2203,8 @@ async function runTest() {
     await assertVisibleWorkInterruptsPrefetchDelay();
     await assertFeedbackControls();
     await assertOfflineResilience();
+    await assertLegacyReasoningCacheIsRefreshed();
+    await assertLegacyIndexedDbIsPurged();
 
     const [tokenTransport, forwardedTransport, cwaTransport, consentedTransport] = await Promise.all([
         captureAuthTransport({ authMode: 'token', apiToken: 'browser-token' }),

@@ -61,8 +61,8 @@ translation/cache/provider core. There are three deployment profiles:
    only forwarded client hop, and reader uploads have an operator-configurable
    finite body cap.
 4. **Community Applications combined profile (listing-gated).** One non-root
-   container runs `BT_ROLE=all`, exposes only its proxy port and keeps API port
-   `8390` private. This is production-supported only when the searchable
+   container runs `BT_ROLE=all`, exposes only its proxy port and serves API port
+   `8390` on loopback only. This is production-supported only when the searchable
    listing pins a certified immutable image digest and the host matches the
    [documented CWA-only boundary](../install/community-applications.md).
    Kavita uses the universal hub or split `btctl` profile.
@@ -142,8 +142,8 @@ cannot detach an active API container from its bind source.
   toolbar-position preferences. Translation mode resets to OFF on every book
   entry and page reload, including when older mode preferences remain in
   browser storage.
-  Optional browser persistence is enabled only by the server-owned browser
-  contract and may be constrained by browser storage. Keys include release,
+  The managed browser contract does not enable browser persistence of
+  translated text. Keys include release,
   languages, book, chapter, and stable DOM position so repeated text in
   different literary contexts cannot collide.
 
@@ -155,8 +155,10 @@ cannot detach an active API container from its bind source.
   sessions are in-memory, bounded and short-lived. Subjects become connector-
   scoped hashes and never expose upstream user ids to cache or metrics.
 - **Flask Server (`server.py`)**: Exposes translation endpoints `/translate`,
-  `/translate/batch`, and real-time SSE streaming `/translate/stream` along with
-  metrics and health probes. Only shallow
+  `/translate/batch` and SSE streaming `/translate/stream`, per-book
+  `/glossary` and `/feedback` endpoints, `/export/epub`, and metrics and health
+  probes. The bundled overlay uses `/translate/batch`; `/translate/stream` and
+  `/translate` serve API clients. Only shallow
   liveness/readiness routes bypass authentication. Observability uses a fixed
   schema for HTTP classes and bounded auth, admission, provider, deadline, and
   partial-batch outcomes; it never creates labels from request or book data.

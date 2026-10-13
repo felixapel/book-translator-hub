@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Removed the overlay's unused streaming client code. The bundled overlay translates through `/translate/batch`; `/translate/stream` remains an API endpoint. The README, architecture and Community Applications guides now describe that behavior, and the Community Applications guide no longer contradicts its own boundary: the profile proxies CWA only and does not publish API port `8390`.
+- Documented that behind an operator reverse proxy all readers share one pre-auth admission budget (`BT_AUTH_RATE_LIMIT_PER_MINUTE`, `BT_AUTH_MAX_INFLIGHT_PER_CLIENT`), in ADR-006, troubleshooting and the configuration reference. The configuration reference now also lists `BT_SESSION_COOKIE_NAME`, `BT_API_PORT` and the glossary/feedback limits, and states that HTTP translation requests do not use singleflight coalescing. The README and architecture guide no longer claim that the server can enable browser persistence of translated text.
+- `/stats` no longer prunes. It ran cache expiry and the full cap scan as a write transaction on every uncached call, which any authenticated reader could repeat through a rate-limit-exempt route. Retention still runs on the write watermark, and `/stats` counts only unexpired rows, matching cache reads.
+- `/translate` and `/translate/stream` load the book glossary once per request instead of twice, and a cache lookup probes the single-text contract once when it equals the one-paragraph batch contract.
+- Startup logs a warning when `BT_LOCAL_URL` resolves only to public addresses, because the reader labels that provider local and uses it as a fallback without remote-fallback consent.
+
+### Fixed
+
+- A one-paragraph translation group is cached under a contract that includes the book glossary. The first visible paragraph is such a group, so adding or changing a glossary term previously kept serving its cached pre-glossary translation, and translations made with a glossary were stored under the no-glossary key. Entries already stored that way remain reachable only if the book's glossary is emptied again.
+- `/translate/stream` with an Anthropic-protocol provider (Anthropic, MiniMax) no longer waits for a second upstream slot while holding the first. With `BT_MAX_UPSTREAM_INFLIGHT=1` every such request failed with `work_budget_exhausted`, and two concurrent requests blocked each other until the queue timeout.
+- A provider stream that fails after sending part of a translation now ends with `provider_stream_interrupted` instead of appending a complete fallback translation to the partial text and caching the result. Failures before the first delta still use an eligible fallback, and HTTP failures follow the same retry, fallback and `provider_rate_limited` policy as non-streamed calls.
+- Glossary terms and paragraph ratings are capped per reader across all books (`BT_GLOSSARY_MAX_TENANT_ENTRIES`, default `5000`; `BT_FEEDBACK_MAX_TENANT_ENTRIES`, default `50000`). The existing caps were per book, and book ids are client metadata, so one reader could grow both tables without bound. Each cap check and write now runs in one transaction.
+- CI, the release gate and the maintainer guides discover the Python suite as the `tests.python` package (`-s tests/python -t .`). Top-level discovery skipped the package's `DB_PATH` redirect, so the 2.4.2 fix did not apply to the main suite run: it still wrote `translations.db` into the checkout, and a reused file made database-backed tests depend on earlier runs.
+- The combined `BT_ROLE=all` container (Community Applications profile) serves the API on `127.0.0.1` only. It listened on all interfaces, so another container on the same Docker network could call the API directly instead of through the proxy.
+- Removed the overlay's IndexedDB copy of opt-in persisted translations (`BookTranslatorDB`). It grew without eviction, was loaded whole on every page, and "Clear all cache" did not reach it. The overlay now deletes that database on load; opt-in persistence keeps the bounded per-language `localStorage` cache, and the server cache is unchanged.
+- A leading `<think>…</think>` block from a reasoning model served without a reasoning parser is no longer cached or shown as the translation, in single, batch and streamed responses. Streams hold that block back, within the response byte cap, instead of emitting it, and a block that never closes is rejected as an invalid provider response. Cached translations that start with such a block read as misses and are replaced by the next translation. Output is left unchanged when the source paragraph itself contains `<think>`.
+- Opt-in browser persistence starts a fresh cache generation and removes the prior generation, so reasoning saved before the provider fix cannot bypass sanitized backend results by being displayed or exported from browser storage. Fresh translations preserve literal `<think>` source text.
+- EPUB export drops characters that XML 1.0 cannot represent (for example a form feed carried over from the source book), which previously produced a chapter readers could not open. Every selectable target language now has its own `dc:language` tag instead of 82 of them falling back to `en`, and the chapter declares the same language in `lang`/`xml:lang`.
+- Streamed translations are stripped and must be non-empty before they are cached, so they match non-streamed provider output. Streamed responses are closed when the stream ends, a single SSE line is bounded by `BT_MAX_UPSTREAM_RESPONSE_BYTES`, and `openai-compatible` streams connect only to the per-attempt vetted public addresses.
+
 ## [2.4.2] - 2026-10-06
 
 ### Changed

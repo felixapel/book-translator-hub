@@ -101,6 +101,31 @@ class StreamEndpointTests(unittest.TestCase):
         self.assertNotIn("event: done", data)
         mock_put_cache.assert_not_called()
 
+    @patch("server._cache_lookup", return_value=None)
+    @patch("server.translate_text_stream")
+    @patch("server.put_cache")
+    def test_stream_never_caches_blank_output(self, mock_put_cache, mock_stream, mock_lookup):
+        mock_stream.return_value = [(" ", "local"), ("\n", "local")]
+        resp = self.app.post("/translate/stream", json={"text": "Hello world", "source_lang": "English", "target_lang": "Spanish"})
+        data = resp.get_data(as_text=True)
+        self.assertIn("event: error", data)
+        self.assertIn("invalid_provider_response", data)
+        self.assertNotIn("event: done", data)
+        mock_put_cache.assert_not_called()
+
+    @patch("server._cache_lookup", return_value=None)
+    @patch("server.translate_text_stream")
+    @patch("server.put_cache")
+    def test_stream_caches_the_same_normalized_text_as_single_requests(self, mock_put_cache, mock_stream, mock_lookup):
+        mock_stream.return_value = [("  Hola", "local"), (" mundo \n", "local")]
+        resp = self.app.post("/translate/stream", json={"text": "Hello world", "source_lang": "English", "target_lang": "Spanish"})
+        data = resp.get_data(as_text=True)
+        self.assertIn('"translated": "Hola mundo"', data)
+        self.assertEqual(
+            {call.args[3] for call in mock_put_cache.call_args_list},
+            {"Hola mundo"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

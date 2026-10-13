@@ -25,6 +25,9 @@ log = logging.getLogger("book-translator.feedback")
 FEEDBACK_TABLE = "feedback_v1"
 FEEDBACK_MAX_ENTRIES = env_int("BT_FEEDBACK_MAX_ENTRIES", 5000)
 FEEDBACK_MAX_KEY_CHARS = env_int("BT_FEEDBACK_MAX_KEY_CHARS", 128)
+# Book ids are client metadata, so the per-book cap alone would let one
+# reader grow the table without bound by naming new books.
+FEEDBACK_MAX_TENANT_ENTRIES = env_int("BT_FEEDBACK_MAX_TENANT_ENTRIES", 50000)
 
 RATING_UP = 1
 RATING_DOWN = -1
@@ -106,15 +109,30 @@ def record_feedback(
     _ensure_init()
     conn = _connect()
     try:
+        # Count and write in one write transaction so concurrent requests
+        # cannot both pass the caps.
+        conn.execute("BEGIN IMMEDIATE")
+        tenant_hash, book_hash = _hash(tenant), _hash(book_id)
         count = conn.execute(
             f"""SELECT COUNT(*) FROM {FEEDBACK_TABLE}
                 WHERE tenant_hash = ? AND book_hash = ?
                 AND para_key != ?""",
-            (_hash(tenant), _hash(book_id), key),
+            (tenant_hash, book_hash, key),
         ).fetchone()[0]
         if count >= FEEDBACK_MAX_ENTRIES:
             raise ValueError(
                 f"feedback exceeds the {FEEDBACK_MAX_ENTRIES}-entry limit"
+            )
+        tenant_count = conn.execute(
+            f"""SELECT COUNT(*) FROM {FEEDBACK_TABLE}
+                WHERE tenant_hash = ?
+                AND NOT (book_hash = ? AND para_key = ?)""",
+            (tenant_hash, book_hash, key),
+        ).fetchone()[0]
+        if tenant_count >= FEEDBACK_MAX_TENANT_ENTRIES:
+            raise ValueError(
+                "feedback exceeds the "
+                f"{FEEDBACK_MAX_TENANT_ENTRIES}-entry limit across all books"
             )
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
@@ -125,9 +143,12 @@ def record_feedback(
                 ON CONFLICT (tenant_hash, book_hash, para_key)
                 DO UPDATE SET rating = excluded.rating,
                               updated_at = excluded.updated_at""",
-            (_hash(tenant), _hash(book_id), key, score, now, now),
+            (tenant_hash, book_hash, key, score, now, now),
         )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
     return {"para_key": key, "rating": score}

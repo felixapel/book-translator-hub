@@ -105,17 +105,23 @@ def _cache_lookup(
     book_id: str = "unscoped",
     chapter_id: str = "unscoped",
     allow_cloud_fallback: bool = False,
+    glossary: list[tuple[str, str]] | None = None,
 ) -> str | None:
     """Probe exact single-translation and 1-item batch contracts in provider failover order."""
-    # The glossary is server-owned state for this tenant/book, loaded here so
-    # the probe always uses the exact prompt contract the miss will translate
-    # under. A lookup failure degrades to the no-glossary contract (non-fatal).
-    glossary = _request_glossary(tenant, book_id)
+    # The glossary is server-owned state for this tenant/book. Callers pass
+    # the list they will translate with, so the probe uses the exact prompt
+    # contract of a miss; otherwise it is loaded here. A lookup failure
+    # degrades to the no-glossary contract (non-fatal).
+    if glossary is None:
+        glossary = _request_glossary(tenant, book_id)
     contracts = [single_cache_contract(source_lang, target_lang, glossary)]
     try:
-        contracts.append(
-            batch_cache_contract([text], [0], source_lang, target_lang, glossary)
+        batch_contract = batch_cache_contract(
+            [text], [0], source_lang, target_lang, glossary
         )
+        # Without context the two contracts are identical; probe it once.
+        if batch_contract not in contracts:
+            contracts.append(batch_contract)
     except Exception:
         pass
     for provider, model in cache_lookup_backends(
@@ -1733,6 +1739,7 @@ def translate():
         book_id=book_id,
         chapter_id=chapter_id,
         allow_cloud_fallback=allow_cloud_fallback,
+        glossary=glossary,
     )
     if cached is not None:
         _record_metric(0, hits=1, misses=0)
@@ -1926,6 +1933,7 @@ def translate_stream():
         book_id=book_id,
         chapter_id=chapter_id,
         allow_cloud_fallback=allow_cloud_fallback,
+        glossary=glossary,
     )
     if cached is not None:
         _record_metric(0, hits=1, misses=0)
@@ -1961,8 +1969,15 @@ def translate_stream():
                 backend_used = backend
                 yield f"data: {json.dumps({'delta': delta, 'cached': False})}\n\n"
 
-            complete_translation = "".join(full_text)
+            # Same normalization and emptiness rule as non-streamed provider
+            # text, so every cache contract stores one canonical value.
+            complete_translation = "".join(full_text).strip()
             elapsed_ms = int((time.monotonic() - start) * 1000)
+            if not complete_translation:
+                _record_metric(elapsed_ms, hits=0, misses=1, error=True)
+                _record_outcome("invalid_provider_response")
+                yield f"event: error\ndata: {json.dumps({'error': 'invalid_provider_response', 'error_code': 'invalid_provider_response', 'request_id': req_id})}\n\n"
+                return
             _record_metric(elapsed_ms, hits=0, misses=1)
 
             try:
@@ -2009,7 +2024,10 @@ def translate_stream():
                     pass
                 _invalidate_stats_cache()
             except Exception as e:
-                log.error("Failed to cache streamed translation: %s", e)
+                log.error(
+                    "Cache write failed (non-fatal) error_type=%s",
+                    type(e).__name__,
+                )
 
             yield f"event: done\ndata: {json.dumps({'translated': complete_translation, 'cached': False, 'backend': backend_used, 'elapsed_ms': elapsed_ms, 'request_id': req_id})}\n\n"
         except WorkBudgetExceeded as exc:

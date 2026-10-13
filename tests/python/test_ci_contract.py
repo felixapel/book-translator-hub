@@ -24,7 +24,7 @@ PY_COMPILE_COMMAND = (
 )
 BACKEND_DISCOVERY_COMMAND = (
     "python3 -m coverage run --branch --source=. "
-    "--omit='.venv/*,tests/*,tools/*' -m unittest discover -v tests/python"
+    "--omit='.venv/*,tests/*,tools/*' -m unittest discover -v -s tests/python -t ."
 )
 COVERAGE_COMMAND = (
     "python3 -m coverage report --precision=1 --show-missing "
@@ -36,6 +36,14 @@ class CIContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.workflow = GITHUB_CI.read_text()
+
+    def test_suite_database_stays_outside_the_checkout(self):
+        # Discovery must import tests.python as a package so its __init__
+        # redirects DB_PATH; top-level discovery wrote translations.db here.
+        import cache
+
+        database = Path(cache.DB_PATH).resolve()
+        self.assertFalse(database.is_relative_to(ROOT), database)
 
     def test_all_backend_contract_suites_are_required(self):
         for command in (

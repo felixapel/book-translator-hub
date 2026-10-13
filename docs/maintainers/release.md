@@ -45,7 +45,7 @@ git ls-files -z -- '*.py' | xargs -0 -r python3 -m py_compile
 bash -n btctl install_unraid.sh scripts/*.sh
 python3 -m coverage erase
 python3 -m coverage run --branch --source=. \
-  --omit='.venv/*,tests/*,tools/*' -m unittest discover -v tests/python
+  --omit='.venv/*,tests/*,tools/*' -m unittest discover -v -s tests/python -t .
 python3 -m coverage report --precision=1 --show-missing --fail-under=60
 node -c static/translator.js
 node -c static/loader.js

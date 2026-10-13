@@ -3,6 +3,7 @@ import io
 import os
 import unittest
 import zipfile
+from xml.etree import ElementTree
 from unittest import mock
 
 os.environ.setdefault("BT_AUTH_MODE", "disabled")
@@ -10,7 +11,7 @@ os.environ.setdefault("BT_ALLOW_INSECURE_AUTH", "true")
 
 import server
 from auth import RequestAuthenticator
-from epub_export import build_epub, epub_filename
+from epub_export import LANGUAGE_CODES, build_epub, epub_filename
 
 
 def _names(payload: bytes) -> list:
@@ -67,6 +68,7 @@ class EpubRebuildTests(unittest.TestCase):
         for title, paragraphs in (
             ("", ["a"]),
             ("   ", ["a"]),
+            ("\x00\x0b", ["a"]),
             ("T", []),
             ("T", "not-a-list"),
             ("T", ["ok", 7]),
@@ -74,6 +76,34 @@ class EpubRebuildTests(unittest.TestCase):
             with self.subTest(title=title, paragraphs=paragraphs):
                 with self.assertRaises(ValueError):
                     build_epub(title, paragraphs)
+
+    def test_characters_xml_cannot_represent_are_dropped(self):
+        payload = build_epub(
+            "Cap\x0ctulo\x00", ["Hola\x0b mundo\x1f", "tab\tkept\nline"],
+            target_lang="Spanish",
+        )
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            documents = {
+                name: archive.read(name)
+                for name in ("OEBPS/content.opf", "OEBPS/toc.ncx", "OEBPS/chapter.xhtml")
+            }
+        for name, document in documents.items():
+            with self.subTest(document=name):
+                ElementTree.fromstring(document)
+        chapter = documents["OEBPS/chapter.xhtml"].decode("utf-8")
+        self.assertIn("<h1>Captulo</h1>", chapter)
+        self.assertIn("<p>Hola mundo</p>", chapter)
+        self.assertIn("<p>tab\tkept\nline</p>", chapter)
+
+    def test_every_selectable_language_has_its_own_code(self):
+        self.assertEqual(set(LANGUAGE_CODES), server.VALID_LANGUAGES)
+        payload = build_epub("T", ["a"], target_lang="Swedish")
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            opf = archive.read("OEBPS/content.opf").decode("utf-8")
+            chapter = archive.read("OEBPS/chapter.xhtml").decode("utf-8")
+        self.assertIn("<dc:language>sv</dc:language>", opf)
+        self.assertIn('xml:lang="sv"', chapter)
+        self.assertIn('lang="sv"', chapter)
 
     def test_unknown_language_falls_back_to_english_code(self):
         payload = build_epub("T", ["a"], target_lang="Klingon")

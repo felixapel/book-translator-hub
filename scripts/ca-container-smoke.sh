@@ -210,6 +210,20 @@ for _ in $(seq 1 30); do
 done
 curl -sf "http://127.0.0.1:${APP_PORT}/bt-api/ping" | grep -q '"status":"ok"'
 
+# Peers on the container network reach the proxy, never the API behind it.
+docker run --rm --network "$SMOKE_NETWORK" \
+    "${app_sandbox[@]}" \
+    --entrypoint python "$SMOKE_IMAGE" -c '
+import socket, sys
+host = sys.argv[1]
+socket.create_connection((host, 8080), 2).close()
+try:
+    socket.create_connection((host, 8390), 2).close()
+except ConnectionRefusedError:
+    sys.exit(0)
+sys.exit("combined profile API port is reachable from the container network")
+' "$APP_CONTAINER"
+
 test "$(docker exec "$APP_CONTAINER" id -u)" = "101"
 test "$(docker exec "$APP_CONTAINER" id -g)" = "102"
 test "$(docker inspect "$APP_CONTAINER" --format '{{.Config.User}}')" = "101:102"

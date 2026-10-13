@@ -71,6 +71,16 @@ CACHE_MAX_ENTRIES = _positive_int_env("BT_CACHE_MAX_ENTRIES", 100_000)
 CACHE_HIT_FLUSH_THRESHOLD = _positive_int_env("BT_CACHE_HIT_FLUSH_THRESHOLD", 100)
 
 
+def _cached_reasoning(text: str, translated: str) -> bool:
+    """Whether a row holds a reasoning model's <think> block, not a translation.
+
+    Earlier releases cached that block when a model was served without a
+    reasoning parser. Such rows read as misses so the next translation
+    replaces them; a source that contains the tag keeps its literal text.
+    """
+    return translated.lstrip().startswith("<think>") and "<think>" not in text
+
+
 @dataclass(frozen=True, slots=True)
 class CacheScope:
     """Every semantic dimension that can change a translation result.
@@ -437,6 +447,8 @@ class CacheStore:
                 conn.rollback()
                 raise
             return None
+        if _cached_reasoning(text, row[0]):
+            return None
         if record_hit:
             self._queue_hit(cache_key)
         log.debug(
@@ -507,9 +519,9 @@ class CacheStore:
             for cache_key, _ in expired:
                 del by_key[cache_key]
         results: list[str | None] = []
-        for key in keys:
+        for (text, *_), key in zip(entries, keys):
             row = by_key.get(key)
-            if row is None:
+            if row is None or _cached_reasoning(text, row[0]):
                 results.append(None)
                 continue
             if record_hit:
@@ -695,29 +707,29 @@ class CacheStore:
         return deleted
 
     def stats(self) -> dict:
+        # Monitoring reads never prune: retention runs on the write watermark,
+        # so /stats cannot serialize the WAL writer. Expired rows that are not
+        # pruned yet are excluded, matching get().
         self.flush_hits()
         conn = self.connection()
-        try:
-            self._delete_expired(conn)
-            self._enforce_cap(conn)
-            conn.commit()
-            total = conn.execute("SELECT COUNT(*) FROM translations_v2").fetchone()[0]
-            total_hits = conn.execute(
-                "SELECT COALESCE(SUM(hit_count), 0) FROM translations_v2"
-            ).fetchone()[0]
-            pairs = conn.execute(
-                """SELECT source_lang, target_lang, COUNT(*)
-                   FROM translations_v2 GROUP BY source_lang, target_lang"""
-            ).fetchall()
-            legacy_tables = int(
-                "source_text" in self._table_columns(conn, "translations")
-            ) + conn.execute(
-                """SELECT COUNT(*) FROM sqlite_master
-                   WHERE type='table' AND name LIKE 'translations_v1%'"""
-            ).fetchone()[0]
-        except Exception:
-            conn.rollback()
-            raise
+        cutoff = self._cutoff()
+        total, total_hits = conn.execute(
+            """SELECT COUNT(*), COALESCE(SUM(hit_count), 0)
+               FROM translations_v2 WHERE created_at >= ?""",
+            (cutoff,),
+        ).fetchone()
+        pairs = conn.execute(
+            """SELECT source_lang, target_lang, COUNT(*)
+               FROM translations_v2 WHERE created_at >= ?
+               GROUP BY source_lang, target_lang""",
+            (cutoff,),
+        ).fetchall()
+        legacy_tables = int(
+            "source_text" in self._table_columns(conn, "translations")
+        ) + conn.execute(
+            """SELECT COUNT(*) FROM sqlite_master
+               WHERE type='table' AND name LIKE 'translations_v1%'"""
+        ).fetchone()[0]
         return {
             "schema_version": CACHE_SCHEMA_VERSION,
             "total_entries": total,

@@ -382,7 +382,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
             "python3 -m tests.python.test_translation",
             "python3 -m tests.python.test_hardening",
             "python3 -m coverage erase",
-            "python3 -m coverage run --branch --source=. --omit='.venv/*,tests/*,tools/*' -m unittest discover -v tests/python",
+            "python3 -m coverage run --branch --source=. --omit='.venv/*,tests/*,tools/*' -m unittest discover -v -s tests/python -t .",
             "python3 -m coverage report --precision=1 --show-missing --fail-under=\"$BT_COVERAGE_FAIL_UNDER\"",
             "bash -n btctl install_unraid.sh scripts/*.sh",
             "npm ci",

@@ -27,9 +27,9 @@
 
 ## ✨ What it does
 
-- **Streaming and visible-work priority:** Streams eligible first-paragraph output and prioritizes visible paragraphs ahead of bounded background work. Actual latency depends on the reader, provider, model, network and cache state.
+- **Visible-work priority:** Sends the first visible paragraph on its own and prioritizes visible paragraphs ahead of bounded background work. Actual latency depends on the reader, provider, model, network and cache state.
 - **Bounded lookahead:** Can pre-translate a limited forward window while keeping visible requests ahead of background work. It is not a page-turn latency guarantee.
-- **Layered cache:** Uses an in-memory reading cache and a private SQLite cache. Optional browser persistence is controlled by the server-owned reader configuration and may be unavailable when browser storage is constrained.
+- **Layered cache:** Uses an in-memory reading cache in the browser and a private SQLite cache on the server. Managed profiles do not store translated text in browser storage.
 - **SQLite WAL configuration:** Uses WAL, bounded busy timeouts, a memory-mapped I/O window and page cache settings. Operators should measure cache behavior on their own storage and workload.
 - **Language and reading controls:** Detects source language from reader metadata/HTML with a manual override, plus a target-language selector on the floating toolbar.
 - **Manual activation:** Each book entry and page reload starts with translation OFF, even if this browser previously translated the book. Book text is sent for translation only after the reader turns the mode on.

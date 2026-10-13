@@ -77,6 +77,7 @@ class APISchemaTests(unittest.TestCase):
             "book_id": "book-7",
             "chapter_id": "chapter-3",
             "allow_cloud_fallback": False,
+            "glossary": [],
         })
 
     def test_cloud_fallback_consent_must_be_a_json_boolean(self):

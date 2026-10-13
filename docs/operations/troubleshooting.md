@@ -196,6 +196,13 @@ reviewed fragment with:
 - Local OpenAI-compatible endpoints for vLLM, Ollama, LM Studio, and llama.cpp
   normally end in `/v1/chat/completions`. Confirm the configured model name
   exists on that server.
+- Reasoning models such as Qwen3 or DeepSeek-R1, served without the server's
+  reasoning parser, start each answer with a `<think>…</think>` block. The API
+  drops that block unless the paragraph itself contains `<think>`, and treats
+  translations cached with it as misses. If the block never closes, usually
+  because reasoning used the whole output budget, the request fails with
+  `provider_unavailable` and the API log shows `error_type=ValueError`. Enable
+  the reasoning parser or a non-thinking mode for translation.
 - `LLM_API_KEY` stays empty for a keyless local server. Cloud provider keys are
   server-side only and must not appear in `/bt-config.json`, browser storage,
   generated Unraid XML, or `state.json`.
@@ -292,6 +299,16 @@ not represent translation calls one-for-one. `provider_calls.rate_limited`
 distinguishes provider `429`s from the API's own
 `outcomes.api_rate_limited` admission counter. Counters are process-local and
 reset when the API process restarts.
+
+A `429` whose body has `"scope": "auth_admission"` comes from the pre-auth
+limiter, which keys on the address the injection proxy observes. Behind a
+reverse proxy that is the proxy's address for every browser, so all readers
+share `BT_AUTH_RATE_LIMIT_PER_MINUTE` and `BT_AUTH_MAX_INFLIGHT_PER_CLIENT`
+(`outcomes.auth_rate_limited` in `/metrics`). Raise them for the expected
+number of readers, and limit which clients can reach the edge, for example with
+its own authentication, so unauthenticated traffic cannot spend the shared
+budget. `"scope": "api_admission"` is the per-reader quota
+(`BT_RATE_LIMIT_PER_MINUTE`).
 
 For an RPM-limited cloud model, raise `BT_BATCH_SIZE` gradually and use a
 positive `BT_BATCH_SOURCE_TOKEN_BUDGET` so unusually long paragraphs cannot

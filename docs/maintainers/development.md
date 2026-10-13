@@ -34,7 +34,7 @@ file, so it needs no running server, no API key, and no network access:
 .venv/bin/python3 -m tests.python.test_hardening
 .venv/bin/python3 -m coverage erase
 .venv/bin/python3 -m coverage run --branch --source=. \
-  --omit='.venv/*,tests/*,tools/*' -m unittest discover -v tests/python
+  --omit='.venv/*,tests/*,tools/*' -m unittest discover -v -s tests/python -t .
 .venv/bin/python3 -m coverage report --precision=1 --show-missing --fail-under=60
 ```
 
