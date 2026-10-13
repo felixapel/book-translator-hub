@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Removed the overlay's unused streaming client code. The bundled overlay translates through `/translate/batch`; `/translate/stream` remains an API endpoint. The README, architecture and Community Applications guides now describe that behavior, and the Community Applications guide no longer contradicts its own boundary: the profile proxies CWA only and does not publish API port `8390`.
+- Documented that behind an operator reverse proxy all readers share one pre-auth admission budget (`BT_AUTH_RATE_LIMIT_PER_MINUTE`, `BT_AUTH_MAX_INFLIGHT_PER_CLIENT`), in ADR-006, troubleshooting and the configuration reference. The configuration reference now also lists `BT_SESSION_COOKIE_NAME`, `BT_API_PORT` and the glossary/feedback limits, and states that HTTP translation requests do not use singleflight coalescing. The README and architecture guide no longer claim that the server can enable browser persistence of translated text.
 - `/stats` no longer prunes. It ran cache expiry and the full cap scan as a write transaction on every uncached call, which any authenticated reader could repeat through a rate-limit-exempt route. Retention still runs on the write watermark, and `/stats` counts only unexpired rows, matching cache reads.
 - `/translate` and `/translate/stream` load the book glossary once per request instead of twice, and a cache lookup probes the single-text contract once when it equals the one-paragraph batch contract.
 

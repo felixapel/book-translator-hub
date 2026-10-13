@@ -63,6 +63,13 @@ from the image because unvalidated textual substitution is no longer used.
   when supplied by the exact managed proxy peer as one clean IP; chained or
   client-supplied values fail closed. Successful API requests use an opaque
   authenticated-subject quota.
+- Behind an operator reverse proxy such as SWAG or Traefik, nginx observes that
+  proxy's address for every browser. All readers then share one pre-auth attempt
+  and in-flight budget, so one client's burst, or unauthenticated traffic that
+  reaches the edge, can produce `auth_admission` `429`s for everyone.
+  Authenticated work keeps its per-subject quota. Trusting a client address
+  forwarded by the edge would also change the strong-session context sent to
+  CWA, so it needs a separate decision rather than a configuration toggle.
 - An operator can raise the CWA upload ceiling for a known library, but cannot
   configure an unlimited body through this interface.
 - A mismatched CWA reverse-proxy header name is an unsafe deployment error;

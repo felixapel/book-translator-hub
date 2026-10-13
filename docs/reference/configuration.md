@@ -85,7 +85,7 @@ configuration.
 | Variable | Default | Boundary |
 |---|---:|---|
 | `BT_ROLE` | `auto` | `hub` for the universal topology; `api` or `proxy` for managed split installs; `all` only for the certified, digest-pinned Community Applications profile. |
-| `API_PORT` | Port | `8390` | Alias for `PORT`. Translation REST + SSE streaming endpoint port. |
+| `API_PORT`, `BT_API_PORT` | Port | `8390` | Aliases for `PORT`. Translation REST + SSE streaming endpoint port. |
 | `PROXY_PORT` | Port | `8080` | Alias for `BT_PROXY_PORT`. Injected reader proxy port. |
 | `CWA_URL` | URL | `""` | Direct URL / IP of your Calibre-Web container (e.g. `http://192.168.0.122:8383`). |
 | `KAVITA_URL` | URL | `""` | Direct URL / IP of your Kavita container (e.g. `http://192.168.0.122:5547`). |
@@ -123,7 +123,7 @@ configuration.
 | `BT_REQUEST_MAX_INPUT_BYTES` | `5000000` | Cumulative prompt bytes per API request. |
 | `BT_REQUEST_MAX_OUTPUT_TOKENS` | `163840` | Cumulative reserved output tokens per API request. |
 | `BT_REQUEST_DEADLINE_SECONDS` | `90` | Absolute request deadline. |
-| `BT_SINGLEFLIGHT_MAX_ENTRIES` | `1024` | Active deduplicated operation cap. |
+| `BT_SINGLEFLIGHT_MAX_ENTRIES` | `1024` | Active deduplicated operation cap for single-text calls made without a request budget. HTTP translation requests each own a work budget and do not coalesce. |
 
 The certified Community Applications profile is CWA-only. Kavita uses the
 universal hub or separate managed `api` and `proxy` roles.
@@ -178,9 +178,10 @@ standalone Compose example accepts the same environment names.
 | `BT_SESSION_KEY_PATH` | `/app/data/reader_session_key` | Private owned 256-bit connector key created by lifecycle code. |
 | `BT_SESSION_TTL_SECONDS` | `300` | Opaque session lifetime; values above five minutes are rejected. |
 | `BT_SESSION_MAX_ENTRIES` | `10000` | In-memory opaque session cap. |
+| `BT_SESSION_COOKIE_NAME` | `__Host-bt-session` (HTTPS) or `bt-session` (loopback HTTP) | Plugin session cookie. It must use the `__Host-` prefix exactly when the public origin is HTTPS; the hub sets `__Host-bt-<reader>-session` per reader. |
 | `BT_IDENTITY_TRUSTED_PROXIES` | empty | Exact trusted peers for forwarded identity. |
-| `BT_AUTH_RATE_LIMIT_PER_MINUTE` | `300` | Pre-authentication attempts per observed client. |
-| `BT_AUTH_MAX_INFLIGHT_PER_CLIENT` | `2` | Concurrent pre-authentication requests per observed client. |
+| `BT_AUTH_RATE_LIMIT_PER_MINUTE` | `300` | Pre-authentication attempts per observed client. Behind a reverse proxy every browser is the same observed client. |
+| `BT_AUTH_MAX_INFLIGHT_PER_CLIENT` | `2` | Concurrent pre-authentication requests per observed client, shared like the rate limit above. |
 | `BT_RATE_LIMIT_PER_MINUTE` | `300` | Successful API requests per authenticated subject. |
 | `BT_RATE_LIMIT_RETRY_AFTER` | `10` | `Retry-After` value returned on `429`. |
 | `BT_RATE_LIMIT_MAX_CLIENTS` | `10000` | Active limiter-bucket cap. |

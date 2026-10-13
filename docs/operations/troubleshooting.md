@@ -293,6 +293,16 @@ distinguishes provider `429`s from the API's own
 `outcomes.api_rate_limited` admission counter. Counters are process-local and
 reset when the API process restarts.
 
+A `429` whose body has `"scope": "auth_admission"` comes from the pre-auth
+limiter, which keys on the address the injection proxy observes. Behind a
+reverse proxy that is the proxy's address for every browser, so all readers
+share `BT_AUTH_RATE_LIMIT_PER_MINUTE` and `BT_AUTH_MAX_INFLIGHT_PER_CLIENT`
+(`outcomes.auth_rate_limited` in `/metrics`). Raise them for the expected
+number of readers, and limit which clients can reach the edge, for example with
+its own authentication, so unauthenticated traffic cannot spend the shared
+budget. `"scope": "api_admission"` is the per-reader quota
+(`BT_RATE_LIMIT_PER_MINUTE`).
+
 For an RPM-limited cloud model, raise `BT_BATCH_SIZE` gradually and use a
 positive `BT_BATCH_SOURCE_TOKEN_BUDGET` so unusually long paragraphs cannot
 create an unbounded prompt. `BT_CLIENT_PREFETCH_GAP_MS` paces only opt-in

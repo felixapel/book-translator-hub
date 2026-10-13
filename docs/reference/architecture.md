@@ -142,8 +142,8 @@ cannot detach an active API container from its bind source.
   toolbar-position preferences. Translation mode resets to OFF on every book
   entry and page reload, including when older mode preferences remain in
   browser storage.
-  Optional browser persistence is enabled only by the server-owned browser
-  contract and may be constrained by browser storage. Keys include release,
+  The managed browser contract does not enable browser persistence of
+  translated text. Keys include release,
   languages, book, chapter, and stable DOM position so repeated text in
   different literary contexts cannot collide.
 
