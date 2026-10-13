@@ -813,6 +813,51 @@ async function assertOfflineResilience() {
     offDom.window.close();
 }
 
+async function assertLegacyIndexedDbIsPurged() {
+    // The removed IndexedDB layer was never evicted or cleared, and it holds
+    // translated book text. The overlay deletes it on load and never opens
+    // IndexedDB again, even with opt-in persistence.
+    const idbDom = new JSDOM(`<!DOCTYPE html><html><body>
+      <main class="book-container">
+        <div class="book-content" data-bt-book-language="en"><p>Stored paragraph.</p></div>
+      </main>
+    </body></html>`, {
+        url: 'https://kavita.example.test/library/7/series/42/book/99',
+        runScripts: 'dangerously'
+    });
+    const opened = [];
+    const deleted = [];
+    idbDom.window.indexedDB = {
+        open: name => { opened.push(name); return {}; },
+        deleteDatabase: name => { deleted.push(name); return {}; }
+    };
+    idbDom.window.BOOK_TRANSLATOR = {
+        apiUrl: '/bt-api',
+        authMode: 'reader_session',
+        credentials: 'same-origin',
+        readerType: 'kavita',
+        readerVersion: '0.9.0.2',
+        readerContractVersion: 'kavita-0.9.0.2-epub-v1',
+        persistCache: true
+    };
+    idbDom.window.requestAnimationFrame = cb => setTimeout(cb, 0);
+    idbDom.window.fetch = async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+        headers: { get: () => null }
+    });
+    const script = idbDom.window.document.createElement('script');
+    script.textContent = code;
+    idbDom.window.document.body.appendChild(script);
+    await wait(100);
+    assert.deepStrictEqual(deleted, ['BookTranslatorDB'],
+        'The legacy IndexedDB translation cache must be deleted on load');
+    assert.deepStrictEqual(opened, [],
+        'The overlay must not open IndexedDB');
+    idbDom.window.close();
+}
+
 async function assertManagedLoaderContract() {
     const loaderDom = new JSDOM(
         '<!DOCTYPE html><html><head></head><body></body></html>',
@@ -2073,6 +2118,7 @@ async function runTest() {
     await assertVisibleWorkInterruptsPrefetchDelay();
     await assertFeedbackControls();
     await assertOfflineResilience();
+    await assertLegacyIndexedDbIsPurged();
 
     const [tokenTransport, forwardedTransport, cwaTransport, consentedTransport] = await Promise.all([
         captureAuthTransport({ authMode: 'token', apiToken: 'browser-token' }),

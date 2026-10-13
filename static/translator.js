@@ -201,6 +201,11 @@
         Object.keys(localStorage).filter(k => k.startsWith(LEGACY_CACHE_PREFIX))
             .forEach(k => localStorage.removeItem(k));
     } catch (e) { /* storage may be unavailable */ }
+    // The former IndexedDB layer copied every translation without eviction,
+    // and clearing the cache never reached it. Delete what it stored.
+    try {
+        if (window.indexedDB) window.indexedDB.deleteDatabase('BookTranslatorDB');
+    } catch (e) { /* storage may be unavailable */ }
 
     function loadCacheForLang(lang) {
         if (!PERSIST_CACHE) return {};
@@ -239,74 +244,9 @@
                 localStorage.setItem(CACHE_PREFIX + TARGET_LANG, JSON.stringify(trimmed));
             } catch (e2) { /* give up persisting; in-memory cache still works */ }
         }
-        persistToIndexedDB(translatedParagraphs);
     }
 
-    async function persistToIndexedDB(entries) {
-        if (!PERSIST_CACHE || !entries) return;
-        try {
-            const db = await getIDB();
-            if (!db) return;
-            const tx = db.transaction(IDB_STORE, 'readwrite');
-            const store = tx.objectStore(IDB_STORE);
-            for (const key of Object.keys(entries)) {
-                store.put({ key: key, text: entries[key] });
-            }
-        } catch (e) {
-            /* ignore IDB write failures */
-        }
-    }
-
-
-    // ── High-Capacity IndexedDB Cache ──────────────────────────────────
-    const IDB_NAME = 'BookTranslatorDB';
-    const IDB_STORE = 'translations_v1';
-    let idbPromise = null;
-
-    function getIDB() {
-        if (!idbPromise && window.indexedDB) {
-            idbPromise = new Promise((resolve) => {
-                try {
-                    const req = window.indexedDB.open(IDB_NAME, 1);
-                    req.onupgradeneeded = (e) => {
-                        const db = e.target.result;
-                        if (!db.objectStoreNames.contains(IDB_STORE)) {
-                            db.createObjectStore(IDB_STORE, { keyPath: 'key' });
-                        }
-                    };
-                    req.onsuccess = (e) => resolve(e.target.result);
-                    req.onerror = () => resolve(null);
-                } catch (e) {
-                    resolve(null);
-                }
-            });
-        }
-        return idbPromise;
-    }
-
-    async function loadCacheAsync(lang) {
-        if (!PERSIST_CACHE) return;
-        try {
-            const db = await getIDB();
-            if (!db) return;
-            const tx = db.transaction(IDB_STORE, 'readonly');
-            const store = tx.objectStore(IDB_STORE);
-            const req = store.getAll();
-            req.onsuccess = () => {
-                if (req.result && Array.isArray(req.result)) {
-                    for (let i = 0; i < req.result.length; i++) {
-                        const item = req.result[i];
-                        if (item && item.key && item.text) {
-                            translatedParagraphs[item.key] = item.text;
-                        }
-                    }
-                }
-            };
-        } catch (e) {}
-    }
-
-    let translatedParagraphs = loadCacheForLang(TARGET_LANG);
-    loadCacheAsync(TARGET_LANG); // hash -> text (restored from last session)
+    let translatedParagraphs = loadCacheForLang(TARGET_LANG); // hash -> text
 
     // ── In-flight request control (responsive buttons + language switches) ──
     // `generation` is bumped whenever the user changes mode/language so that
