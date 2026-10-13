@@ -119,7 +119,13 @@ jobs:
         run: |
           set -e
           npm ci
-          npx playwright install --with-deps --only-shell chromium
+          # Dedicated hosts provision browser libraries without job-level sudo.
+          # The required browser launch still fails if libraries are missing.
+          if [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; then
+            npx playwright install --with-deps --only-shell chromium
+          else
+            npx playwright install --only-shell chromium
+          fi
       - name: Build image
         run: docker build -t "$SMOKE_IMAGE" .
       - name: Exercise independent hardened roles

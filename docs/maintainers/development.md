@@ -154,6 +154,11 @@ uses a controlled immediate edge and real native exchange/translation routes
 for strong-session, navigation and fresh-session evidence. Install the same
 locked npm dependencies and Chromium before running it. Its test-only reader
 DOM is separate from physical stock-reader acceptance.
+The dedicated Gitea Docker host must have Chromium OS libraries provisioned;
+without noninteractive sudo, its job downloads only the locked headless browser.
+The required browser launch fails if those libraries are missing. Containerized
+frontend jobs retain dependency installation; Docker jobs also install those
+dependencies when running as root or with existing noninteractive sudo.
 
 ## Updating Dependency Locks
 
