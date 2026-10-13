@@ -1,9 +1,10 @@
 # Community Applications on Unraid
 
 Community Applications is the simplest supported profile when a searchable CWA
-or Kavita listing exists. It runs one combined non-root container (`BT_ROLE=all`)
-that proxies stock Calibre-Web Automated, Kavita, or both, while publishing the
-direct translation and SSE streaming API port (`8390`) alongside the reader proxy (`8385`).
+listing exists. It runs one combined non-root container (`BT_ROLE=all`) that
+proxies stock Calibre-Web Automated and publishes only the reader proxy (`8385`);
+the translation API port (`8390`) stays private. Kavita uses the
+[universal hub](universal-hub.md) or [`btctl`](btctl.md) profile.
 
 If the listing is absent, its template does not pin an immutable digest, or the
 host is outside the certified scope, use the source-built

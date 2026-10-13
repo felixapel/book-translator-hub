@@ -155,8 +155,10 @@ cannot detach an active API container from its bind source.
   sessions are in-memory, bounded and short-lived. Subjects become connector-
   scoped hashes and never expose upstream user ids to cache or metrics.
 - **Flask Server (`server.py`)**: Exposes translation endpoints `/translate`,
-  `/translate/batch`, and real-time SSE streaming `/translate/stream` along with
-  metrics and health probes. Only shallow
+  `/translate/batch` and SSE streaming `/translate/stream`, per-book
+  `/glossary` and `/feedback` endpoints, `/export/epub`, and metrics and health
+  probes. The bundled overlay uses `/translate/batch`; `/translate/stream` and
+  `/translate` serve API clients. Only shallow
   liveness/readiness routes bypass authentication. Observability uses a fixed
   schema for HTTP classes and bounded auth, admission, provider, deadline, and
   partial-batch outcomes; it never creates labels from request or book data.
