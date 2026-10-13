@@ -141,6 +141,17 @@ class ContainerContractTests(unittest.TestCase):
             combined.index("start_api &"),
         )
 
+    def test_combined_role_serves_the_api_only_on_loopback(self):
+        entrypoint = (ROOT / "docker-entrypoint.sh").read_text()
+        start_api = entrypoint.split("start_api() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn('--bind "127.0.0.1:${PORT}"', start_api)
+        self.assertNotIn("0.0.0.0", start_api)
+        self.assertIn('BT_API_UPSTREAM="${BT_API_UPSTREAM:-http://127.0.0.1:${PORT}}"',
+                      entrypoint)
+        # The split topology reaches the API container over its network.
+        api_branch = entrypoint.split("    api)", 1)[1].split("        ;;", 1)[0]
+        self.assertIn('--bind "0.0.0.0:${PORT}"', api_branch)
+
     def test_non_root_nginx_writes_only_below_tmp(self):
         config = (ROOT / "proxy" / "nginx-main.conf").read_text()
         for directive in (

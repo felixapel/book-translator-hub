@@ -225,8 +225,9 @@ configure_proxy() {
     nginx -t -c /app/proxy/nginx-main.conf -e /dev/stderr
 }
 
+# The combined role's nginx reaches the API on loopback; nothing else may.
 start_api() {
-    gunicorn --bind "0.0.0.0:${PORT}" --workers 1 --threads 8 \
+    gunicorn --bind "127.0.0.1:${PORT}" --workers 1 --threads 8 \
         --worker-tmp-dir /dev/shm \
         --timeout 120 server:app
 }
@@ -264,7 +265,7 @@ validate_trusted_proxies
 validate_api_auth
 initialize_cache
 configure_proxy
-echo "[entrypoint] combined role: API :${PORT}, proxy :${BT_PROXY_PORT}"
+echo "[entrypoint] combined role: API 127.0.0.1:${PORT}, proxy :${BT_PROXY_PORT}"
 start_api &
 API_PID=$!
 start_proxy &

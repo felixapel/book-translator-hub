@@ -61,8 +61,8 @@ translation/cache/provider core. There are three deployment profiles:
    only forwarded client hop, and reader uploads have an operator-configurable
    finite body cap.
 4. **Community Applications combined profile (listing-gated).** One non-root
-   container runs `BT_ROLE=all`, exposes only its proxy port and keeps API port
-   `8390` private. This is production-supported only when the searchable
+   container runs `BT_ROLE=all`, exposes only its proxy port and serves API port
+   `8390` on loopback only. This is production-supported only when the searchable
    listing pins a certified immutable image digest and the host matches the
    [documented CWA-only boundary](../install/community-applications.md).
    Kavita uses the universal hub or split `btctl` profile.
