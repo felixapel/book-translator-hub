@@ -70,6 +70,17 @@ class GlossaryStorageTests(unittest.TestCase):
         self.assertNotIn(b"tenant-secret", blob)
         self.assertNotIn(b"book-secret", blob)
 
+    def test_reader_cannot_spread_terms_over_unlimited_books(self):
+        with mock.patch.object(glossary, "GLOSSARY_MAX_TENANT_ENTRIES", 2):
+            glossary.put_entry("t", "book-1", "Warp", "Curvatura")
+            glossary.put_entry("t", "book-2", "Warp", "Curvatura")
+            with self.assertRaises(ValueError):
+                glossary.put_entry("t", "book-3", "Warp", "Curvatura")
+            # Replacing an existing term and other readers stay allowed.
+            glossary.put_entry("t", "book-2", "warp", "Distorsión")
+            glossary.put_entry("other", "book-3", "Warp", "Curvatura")
+        self.assertEqual(glossary.list_entries("t", "book-3"), [])
+
     def test_validation_rejects_bad_terms(self):
         for source, target in [
             ("", "x"),

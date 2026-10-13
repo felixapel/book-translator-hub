@@ -77,6 +77,17 @@ class FeedbackStorageTests(unittest.TestCase):
         self.assertNotIn(b"tenant-secret", blob)
         self.assertNotIn(b"book-secret", blob)
 
+    def test_reader_cannot_spread_ratings_over_unlimited_books(self):
+        with mock.patch.object(feedback, "FEEDBACK_MAX_TENANT_ENTRIES", 2):
+            feedback.record_feedback("t", "book-1", "p1", 1)
+            feedback.record_feedback("t", "book-2", "p1", 1)
+            with self.assertRaises(ValueError):
+                feedback.record_feedback("t", "book-3", "p1", 1)
+            # Re-voting and other readers stay allowed.
+            feedback.record_feedback("t", "book-2", "p1", -1)
+            feedback.record_feedback("other", "book-3", "p1", 1)
+        self.assertEqual(feedback.get_summary("t", "book-3")["total"], 0)
+
     def test_validation_rejects_bad_input(self):
         for key, rating in [
             ("", 1),

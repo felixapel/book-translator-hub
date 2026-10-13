@@ -109,6 +109,12 @@ configuration.
 | `BT_MAX_UPSTREAM_INFLIGHT` | `2` | Process-wide provider concurrency cap. |
 | `BT_UPSTREAM_QUEUE_TIMEOUT` | `15` | Wait for a provider slot before `503`. |
 | `BT_GLOSSARY_MAX_TERMS_IN_PROMPT` | `50` | Maximum matching glossary terms injected into translation prompt. |
+| `BT_GLOSSARY_MAX_ENTRIES` | `200` | Maximum glossary terms per reader and book. |
+| `BT_GLOSSARY_MAX_TENANT_ENTRIES` | `5000` | Maximum glossary terms per reader across all books. Book ids are client metadata, so this bounds total glossary storage. |
+| `BT_GLOSSARY_MAX_TERM_CHARS` | `200` | Maximum characters in one glossary source or target term. |
+| `BT_FEEDBACK_MAX_ENTRIES` | `5000` | Maximum paragraph ratings per reader and book. |
+| `BT_FEEDBACK_MAX_TENANT_ENTRIES` | `50000` | Maximum paragraph ratings per reader across all books. |
+| `BT_FEEDBACK_MAX_KEY_CHARS` | `128` | Maximum length of the opaque paragraph key sent with a rating. |
 | `BT_MAX_EXPORT_PARAGRAPHS` | `500` | Maximum paragraphs allowed per EPUB export request. |
 | `BT_MAX_EXPORT_TITLE_CHARS` | `200` | Maximum character length for EPUB export titles. |
 | `BT_MAX_EXPORT_TOTAL_CHARS` | `1048576` | Cumulative character budget for EPUB export. |
