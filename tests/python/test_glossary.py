@@ -327,6 +327,34 @@ class GlossaryEndpointTests(unittest.TestCase):
             mock_batch.call_args.kwargs["glossary"], [("Warp", "Curvatura")]
         )
 
+    def test_single_text_endpoints_load_the_glossary_once(self):
+        scope = {"book_id": "book-once", "chapter_id": "ch-1"}
+        for path in ("/translate", "/translate/stream"):
+            with self.subTest(path=path):
+                with (
+                    mock.patch.object(
+                        server, "_request_glossary", return_value=[]
+                    ) as loads,
+                    mock.patch.object(server, "get_cached", return_value="Hola"),
+                ):
+                    resp = self.app.post(path, json={"text": "hello", **scope})
+                    resp.get_data()
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(loads.call_count, 1)
+
+    def test_single_lookup_probes_each_distinct_contract_once(self):
+        with (
+            mock.patch.object(translator, "BT_CONTEXT_WINDOW", 0),
+            mock.patch.object(
+                server, "cache_lookup_backends", return_value=[("local", "m")]
+            ),
+            mock.patch.object(server, "get_cached", return_value=None) as probe,
+        ):
+            server._cache_lookup(
+                "hello", "English", "Spanish", glossary=[("Warp", "Curvatura")]
+            )
+        self.assertEqual(probe.call_count, 1)
+
     def test_new_term_bypasses_a_single_paragraph_cached_without_it(self):
         from translator import BatchTranslationItem
 

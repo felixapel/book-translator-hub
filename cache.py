@@ -695,29 +695,29 @@ class CacheStore:
         return deleted
 
     def stats(self) -> dict:
+        # Monitoring reads never prune: retention runs on the write watermark,
+        # so /stats cannot serialize the WAL writer. Expired rows that are not
+        # pruned yet are excluded, matching get().
         self.flush_hits()
         conn = self.connection()
-        try:
-            self._delete_expired(conn)
-            self._enforce_cap(conn)
-            conn.commit()
-            total = conn.execute("SELECT COUNT(*) FROM translations_v2").fetchone()[0]
-            total_hits = conn.execute(
-                "SELECT COALESCE(SUM(hit_count), 0) FROM translations_v2"
-            ).fetchone()[0]
-            pairs = conn.execute(
-                """SELECT source_lang, target_lang, COUNT(*)
-                   FROM translations_v2 GROUP BY source_lang, target_lang"""
-            ).fetchall()
-            legacy_tables = int(
-                "source_text" in self._table_columns(conn, "translations")
-            ) + conn.execute(
-                """SELECT COUNT(*) FROM sqlite_master
-                   WHERE type='table' AND name LIKE 'translations_v1%'"""
-            ).fetchone()[0]
-        except Exception:
-            conn.rollback()
-            raise
+        cutoff = self._cutoff()
+        total, total_hits = conn.execute(
+            """SELECT COUNT(*), COALESCE(SUM(hit_count), 0)
+               FROM translations_v2 WHERE created_at >= ?""",
+            (cutoff,),
+        ).fetchone()
+        pairs = conn.execute(
+            """SELECT source_lang, target_lang, COUNT(*)
+               FROM translations_v2 WHERE created_at >= ?
+               GROUP BY source_lang, target_lang""",
+            (cutoff,),
+        ).fetchall()
+        legacy_tables = int(
+            "source_text" in self._table_columns(conn, "translations")
+        ) + conn.execute(
+            """SELECT COUNT(*) FROM sqlite_master
+               WHERE type='table' AND name LIKE 'translations_v1%'"""
+        ).fetchone()[0]
         return {
             "schema_version": CACHE_SCHEMA_VERSION,
             "total_entries": total,

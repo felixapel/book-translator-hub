@@ -160,6 +160,25 @@ class CacheV2Tests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(remaining, 0)
 
+    def test_stats_report_live_rows_without_writing(self) -> None:
+        self.store.put("old", "English", "Spanish", "viejo", scope())
+        self.clock.advance(days=31)
+        self.store.put(
+            "new", "English", "French", "nouveau", scope(context_hash="ctx-b")
+        )
+        conn = self.store.connection()
+        changes_before = conn.total_changes
+
+        stats = self.store.stats()
+
+        self.assertEqual(stats["total_entries"], 1)
+        self.assertEqual(stats["language_pairs"], {"English→French": 1})
+        self.assertEqual(conn.total_changes, changes_before)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM translations_v2").fetchone()[0],
+            2,
+        )
+
     def test_hard_cap_is_never_exceeded(self) -> None:
         for index in range(6):
             self.clock.advance(seconds=1)
