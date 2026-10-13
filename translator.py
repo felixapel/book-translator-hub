@@ -1132,10 +1132,76 @@ def _read_capped_json_response(response, budget: WorkBudget) -> object:
         _close_provider_response(response)
 
 
-def _validate_provider_text(value: object) -> str:
+# Reasoning models served without a reasoning parser (for example Qwen3 or
+# DeepSeek-R1 on llama.cpp, Ollama or vLLM) put their chain of thought in the
+# content as a leading <think>…</think> block. It is never translation text,
+# unless the source itself contains the tag; then output is left untouched.
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+def _strip_leading_reasoning(text: str) -> str:
+    """Remove one leading reasoning block; reject a block that never closes."""
+    body = text.lstrip()
+    if not body.startswith(_THINK_OPEN):
+        return text
+    end = body.find(_THINK_CLOSE, len(_THINK_OPEN))
+    if end < 0:
+        raise ValueError("provider response reasoning block is not closed")
+    return body[end + len(_THINK_CLOSE):]
+
+
+def _skip_leading_reasoning(deltas):
+    """Yield streamed deltas without a leading reasoning block.
+
+    Everything received before the first translation text counts against the
+    provider response byte cap. Only a possible partial closing tag is kept
+    while reasoning streams.
+    """
+    held = ""
+    held_bytes = 0
+    phase = "start"
+    for delta in deltas:
+        if phase == "text":
+            yield delta
+            continue
+        held_bytes += len(delta.encode("utf-8"))
+        if held_bytes > BT_MAX_UPSTREAM_RESPONSE_BYTES:
+            raise _ProviderResponseTooLarge("provider reasoning exceeds byte cap")
+        held += delta
+        if phase == "start":
+            held = held.lstrip()
+            if len(held) < len(_THINK_OPEN) and _THINK_OPEN.startswith(held):
+                continue
+            if not held.startswith(_THINK_OPEN):
+                phase = "text"
+                yield held
+                continue
+            held = held[len(_THINK_OPEN):]
+            phase = "reasoning"
+        if phase == "reasoning":
+            end = held.find(_THINK_CLOSE)
+            if end < 0:
+                held = held[-(len(_THINK_CLOSE) - 1):]
+                continue
+            held = held[end + len(_THINK_CLOSE):]
+            phase = "gap"
+        held = held.lstrip()
+        if held:
+            phase = "text"
+            yield held
+    if phase == "reasoning":
+        raise ValueError("provider stream reasoning block is not closed")
+    if phase == "start" and held:
+        yield held
+
+
+def _validate_provider_text(value: object, user_content: str) -> str:
     """Return stripped provider text only when it fits the response boundary."""
     if not isinstance(value, str):
         raise ValueError("provider response text must be a string")
+    if _THINK_OPEN not in user_content:
+        value = _strip_leading_reasoning(value)
     translated = value.strip()
     if not translated:
         raise ValueError("provider response text is empty")
@@ -1179,7 +1245,7 @@ def _translate_openai(
     body = _read_capped_json_response(resp, budget)
 
     content = body.get("choices", [{}])[0].get("message", {}).get("content", "")
-    return _validate_provider_text(content)
+    return _validate_provider_text(content, user_content)
 
 
 def _translate_anthropic(
@@ -1221,7 +1287,7 @@ def _translate_anthropic(
         for block in content
         if isinstance(block, dict) and block.get("type") == "text"
     )
-    return _validate_provider_text(translated)
+    return _validate_provider_text(translated, user_content)
 
 
 # ── Global upstream concurrency cap ─────────────────────────────────────────
@@ -1944,9 +2010,12 @@ def translate_text_stream(
                 budget.reserve_attempt(text + system, max_tokens)
                 _record_provider_call("attempt")
                 attempt_recorded = True
-                for delta in _call_provider_stream(
+                deltas = _call_provider_stream(
                     p, text, system, resolved_timeout, max_tokens, budget
-                ):
+                )
+                if _THINK_OPEN not in text:
+                    deltas = _skip_leading_reasoning(deltas)
+                for delta in deltas:
                     yielded_any = True
                     yield delta, p.cache_namespace
             finally:

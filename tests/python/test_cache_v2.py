@@ -131,6 +131,27 @@ class CacheV2Tests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(remaining, 0)
 
+    def test_cached_reasoning_block_reads_as_a_miss(self) -> None:
+        leaked = "<think>The user wants Spanish.</think>\n\nHola"
+        self.store.put("hello", "English", "Spanish", leaked, scope())
+        self.store.put(
+            "<think>Remember.</think> Bye", "English", "Spanish",
+            "<think>Recuerda.</think> Adiós", scope(),
+        )
+
+        self.assertIsNone(self.store.get("hello", "English", "Spanish", scope()))
+        self.assertEqual(
+            self.store.get_many(
+                [
+                    ("hello", "English", "Spanish", scope()),
+                    ("<think>Remember.</think> Bye", "English", "Spanish", scope()),
+                ],
+                record_hit=True,
+            ),
+            [None, "<think>Recuerda.</think> Adiós"],
+        )
+        self.assertEqual(self.store.stats()["total_hits"], 1)
+
     def test_get_many_aligns_results_and_hashes_duplicates_once(self) -> None:
         self.store.put("hello", "English", "Spanish", "hola", scope())
         self.store.put("bye", "English", "Spanish", "adiós", scope())

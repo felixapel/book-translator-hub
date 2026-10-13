@@ -196,6 +196,13 @@ reviewed fragment with:
 - Local OpenAI-compatible endpoints for vLLM, Ollama, LM Studio, and llama.cpp
   normally end in `/v1/chat/completions`. Confirm the configured model name
   exists on that server.
+- Reasoning models such as Qwen3 or DeepSeek-R1, served without the server's
+  reasoning parser, start each answer with a `<think>…</think>` block. The API
+  drops that block unless the paragraph itself contains `<think>`, and treats
+  translations cached with it as misses. If the block never closes, usually
+  because reasoning used the whole output budget, the request fails with
+  `provider_unavailable` and the API log shows `error_type=ValueError`. Enable
+  the reasoning parser or a non-thinking mode for translation.
 - `LLM_API_KEY` stays empty for a keyless local server. Cloud provider keys are
   server-side only and must not appear in `/bt-config.json`, browser storage,
   generated Unraid XML, or `state.json`.
