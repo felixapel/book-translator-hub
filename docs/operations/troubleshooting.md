@@ -237,7 +237,8 @@ paragraph.
 The current server retries that group once with new opaque IDs. If the second
 envelope is also malformed, it translates the group's paragraphs sequentially.
 Both stages use the original request's deadline, attempt, input-byte,
-output-token, global-inflight, cloud-consent, and singleflight boundaries.
+output-token, global-inflight, and cloud-consent boundaries. Separate HTTP
+requests retain their own budgets and cancellation state; they do not coalesce.
 Successful paragraph recovery returns in the same `200` response while the
 shared work budget remains available, but is not stored under the grouped-prompt
 cache contract; a later healthy grouped request may populate that cache.

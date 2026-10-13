@@ -5,7 +5,6 @@ Runs on port 8390. Frontend (CWA overlay) calls this service.
 import logging
 import json
 import copy
-import hashlib
 import math
 import os
 import re
@@ -74,13 +73,6 @@ def _cache_scope(
         prompt_hash=prompt_hash,
         protocol_version=protocol_version,
     )
-
-
-def _operation_namespace(tenant: str, book_id: str, chapter_id: str) -> str:
-    """Opaque tenant/book/chapter boundary for in-process singleflight."""
-    return hashlib.sha256(
-        "\0".join((tenant, book_id, chapter_id)).encode("utf-8")
-    ).hexdigest()
 
 
 def _request_glossary(tenant: str, book_id: str) -> list[tuple[str, str]]:
@@ -1153,9 +1145,6 @@ def _translate_paragraphs(
                 target_lang,
                 budget=budget,
                 selected_groups=missing_groups,
-                operation_namespace=_operation_namespace(
-                    tenant, book_id, chapter_id
-                ),
                 allow_cloud_fallback=allow_cloud_fallback,
                 recovery_tracker=recovery_tracker,
                 glossary=glossary,
@@ -1759,9 +1748,6 @@ def translate():
             source_lang,
             target_lang,
             budget=budget,
-            operation_namespace=_operation_namespace(
-                tenant, book_id, chapter_id
-            ),
             allow_cloud_fallback=allow_cloud_fallback,
             glossary=glossary,
         )
