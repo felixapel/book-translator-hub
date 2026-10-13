@@ -446,5 +446,88 @@ class ProviderConfigurationTests(unittest.TestCase):
         self.assertNotIn("key", encoded)
 
 
+def _local(endpoint: str) -> translator._Provider:
+    return translator._Provider(
+        "local",
+        "local-model",
+        "",
+        spec=translator.ProviderSpec(
+            provider_id="local",
+            endpoint=endpoint,
+            protocol="openai",
+            locality="local",
+            cache_namespace="local",
+        ),
+    )
+
+
+def _answers(*addresses: str) -> list[tuple]:
+    return [
+        (0, translator._socket.SOCK_STREAM, 6, "", (address, 8000))
+        for address in addresses
+    ]
+
+
+class LocalProviderLocalityTests(unittest.TestCase):
+    def initialize(self, primary, fallback=None, answers=None):
+        resolve = mock.Mock(return_value=answers or [])
+        with (
+            mock.patch.object(translator, "_get_primary", return_value=primary),
+            mock.patch.object(translator, "_get_fallback", return_value=fallback),
+            mock.patch.object(translator._socket, "getaddrinfo", resolve),
+        ):
+            translator.initialize_provider_configuration()
+        return resolve
+
+    def test_public_local_address_logs_a_privacy_warning(self):
+        with self.assertLogs("book-translator.translator", "WARNING") as logs:
+            self.initialize(_local("http://8.8.8.8:8000/v1/chat/completions"))
+        self.assertIn("8.8.8.8", logs.output[0])
+        self.assertIn("public", logs.output[0])
+
+    def test_local_host_resolving_only_to_public_addresses_warns(self):
+        with self.assertLogs("book-translator.translator", "WARNING") as logs:
+            self.initialize(
+                translator._Provider("gemini", "gemini-3.5-flash-lite", "key"),
+                fallback=_local("https://llm.example.test/v1/chat/completions"),
+                answers=_answers("1.1.1.1", "2606:4700:4700::1111"),
+            )
+        self.assertIn("llm.example.test", logs.output[0])
+
+    def test_private_or_mixed_local_answers_stay_quiet(self):
+        for answers in (
+            _answers("192.168.0.122"),
+            _answers("100.101.102.103"),
+            _answers("fd12:3456::1"),
+            _answers("192.168.0.122", "2a01:4f8::1"),
+        ):
+            with (
+                self.subTest(answers=answers),
+                self.assertNoLogs("book-translator.translator", "WARNING"),
+            ):
+                self.initialize(
+                    _local("http://llm.lan:8000/v1/chat/completions"),
+                    answers=answers,
+                )
+
+    def test_unresolvable_local_host_does_not_block_startup(self):
+        with (
+            mock.patch.object(translator._socket, "getaddrinfo",
+                              side_effect=OSError("no DNS yet")),
+            mock.patch.object(translator, "_get_primary",
+                              return_value=_local(
+                                  "http://llm.lan:8000/v1/chat/completions")),
+            mock.patch.object(translator, "_get_fallback", return_value=None),
+            self.assertNoLogs("book-translator.translator", "WARNING"),
+        ):
+            translator.initialize_provider_configuration()
+
+    def test_remote_providers_are_not_resolved(self):
+        resolve = self.initialize(
+            translator._Provider("gemini", "gemini-3.5-flash-lite", "key")
+        )
+        resolve.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

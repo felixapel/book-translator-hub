@@ -801,10 +801,46 @@ def provider_policy() -> dict[str, Optional[str]]:
     }
 
 
+def _warn_if_local_endpoint_is_public(provider: _Provider) -> None:
+    """Log when the "local" endpoint resolves only to public addresses.
+
+    Locality drives the reader's privacy label and lets a local fallback run
+    without remote-fallback consent. This only warns: LAN hosts may have
+    global IPv6 addresses, and DNS may not be ready when the service starts.
+    """
+    parsed = urlsplit(provider.url)
+    hostname = parsed.hostname or ""
+    try:
+        addresses = [ipaddress.ip_address(hostname)]
+    except ValueError:
+        try:
+            resolved = _bounded_getaddrinfo(
+                hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+            )
+            addresses = [ipaddress.ip_address(item[4][0]) for item in resolved]
+        except (_CustomEndpointDNSFailure, IndexError, TypeError, ValueError):
+            return
+    if addresses and all(address.is_global for address in addresses):
+        log.warning(
+            "BT_LOCAL_URL host %s resolves only to public addresses; the "
+            "reader still labels this provider local and uses it as a "
+            "fallback without remote consent",
+            hostname,
+        )
+
+
 def initialize_provider_configuration() -> None:
     """Resolve both provider roles during service startup, before requests."""
-    _get_primary()
-    _get_fallback()
+    providers = [_get_primary(), _get_fallback()]
+    local_urls = set()
+    for provider in providers:
+        if (
+            provider is not None
+            and provider.locality == "local"
+            and provider.url not in local_urls
+        ):
+            local_urls.add(provider.url)
+            _warn_if_local_endpoint_is_public(provider)
 
 
 def _eligible_providers(*, allow_cloud_fallback: bool) -> list[_Provider]:

@@ -52,7 +52,7 @@ all enabled-reader allocations without exceeding the total.
 | `BT_UNRAID_TEMPLATE_DIR` | DockerMan user-template directory for the Unraid profile. |
 | `LLM_PROVIDER` | `local`, a fixed named adapter, or `openai-compatible`. Both managed examples default to local; select a named remote adapter explicitly in the private environment. |
 | `LLM_MODEL` | Provider model identifier. |
-| `BT_LOCAL_URL` | Shared absolute `/v1/chat/completions` endpoint when either role is `local`. |
+| `BT_LOCAL_URL` | Shared absolute `/v1/chat/completions` endpoint when either role is `local`. The reader labels this provider local, and a local fallback runs without remote-fallback consent, so point it only at a host on your own network. Startup logs a warning when the host resolves only to public addresses. |
 | `LLM_API_KEY` | Primary named-provider credential; empty for `local` and `openai-compatible`, which uses its dedicated key variable. |
 | `LLM_CUSTOM_ENDPOINT` | Primary `openai-compatible` public HTTPS URL with exact `/v1/chat/completions` path. |
 | `LLM_CUSTOM_API_KEY` | Dedicated primary custom-endpoint credential. |
