@@ -196,13 +196,14 @@ standalone Compose example accepts the same environment names.
 The managed proxy replaces inbound forwarding chains with one observed address.
 By default that is the immediate socket peer. To distinguish browsers behind one
 operator-controlled edge, set `BT_EDGE_TRUSTED_PROXIES` to its exact immediate
-IPv4/IPv6 peers, for example `192.0.2.8,2001:db8::8`. Bare addresses and `/32`
-or `/128` host networks are accepted; subnets, hostnames, zones and wildcards
-are rejected. The list is limited to 32 distinct peers and 4096 characters.
-Spaces between comma-separated elements are accepted; whole-value padding and
-empty elements are rejected. Validation canonicalizes and deduplicates peers.
-Unspecified, multicast and IPv4-mapped IPv6 addresses are rejected because no
-immediate peer connects from them.
+IPv4 peers, for example `192.0.2.8,198.51.100.8`. Bare addresses and `/32` host
+networks are accepted; subnets, hostnames, zones and wildcards are rejected. The
+list is limited to 32 distinct peers and 4096 characters. Spaces between
+comma-separated elements are accepted; whole-value padding and empty elements
+are rejected. Validation canonicalizes and deduplicates peers. The reader
+listener accepts IPv4 only, so IPv6 peers are rejected, as are unspecified and
+multicast addresses: no immediate peer connects from them. An edge reaching the
+proxy over IPv6 needs an IPv6 listener first.
 
 Trust only an address that nothing but the edge connects from. When the edge
 runs on the host and reaches a published reader port, it arrives from the

@@ -78,12 +78,12 @@ class ProxyConfigRendererTests(unittest.TestCase):
     def test_exact_edge_peers_are_canonicalized_without_changing_api_authority(self):
         result, output, _ = self.render({
             "BT_EDGE_TRUSTED_PROXIES":
-                "2001:0db8:0:0::2/128, 192.0.2.8/32,192.0.2.8",
+                "198.51.100.2/32, 192.0.2.8/32,192.0.2.8",
         })
         self.assertEqual(result.returncode, 0, result.stderr)
         rendered = output.read_text()
         self.assertIn("set_real_ip_from 192.0.2.8;", rendered)
-        self.assertIn("set_real_ip_from 2001:db8::2;", rendered)
+        self.assertIn("set_real_ip_from 198.51.100.2;", rendered)
         self.assertEqual(rendered.count("set_real_ip_from"), 2)
         self.assertIn("real_ip_header X-Forwarded-For;", rendered)
         self.assertIn("real_ip_recursive off;", rendered)
@@ -98,9 +98,9 @@ class ProxyConfigRendererTests(unittest.TestCase):
             "192.0.2.1,", ",192.0.2.1", "192.0.2.1,,192.0.2.2",
             "192.0.2.1\ninclude /tmp/evil;", "192.0.2.1\t", "192.0.2.1\x7f",
             "192.0.2.1; include /tmp/evil;", "192.0.2.1:8080", " 192.0.2.1",
-            # Never an immediate TCP peer of the IPv4 listener.
+            # Never an immediate TCP peer of the IPv4-only listener.
             "0.0.0.0", "0.0.0.0/32", "::", "224.0.0.1", "ff02::1",
-            "::ffff:192.0.2.1",
+            "::ffff:192.0.2.1", "2001:db8::8", "2001:db8::8/128", "::1",
             ",".join(f"192.0.2.{i}" for i in range(1, 34)),
             "192.0.2.1," * 500,
         )
@@ -605,6 +605,11 @@ class EdgeGatewayTrustTests(unittest.TestCase):
         self.assertIsNone(self.render_config._edge_gateway_warning(
             ("172.25.0.1",), route_file=self.directory / "missing"
         ))
+
+    def test_route_table_without_a_default_route_has_no_gateway(self):
+        header_only = self.directory / "header-only"
+        header_only.write_text(self.ROUTES.splitlines(keepends=True)[0])
+        self.assertEqual(self.render_config._default_gateways(header_only), set())
 
     def test_render_warns_but_still_writes_the_configuration(self):
         output = self.directory / "proxy.conf"
