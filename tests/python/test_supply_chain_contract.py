@@ -128,8 +128,9 @@ class SupplyChainContractTests(unittest.TestCase):
             for token in addition.split()
         }
         self.assertEqual(installed["git"], "2.54.0-r0")
-        self.assertEqual(installed["docker-cli"], "29.8.2-r0")
-        self.assertEqual(installed["docker-cli-buildx"], "0.34.1-r1")
+        self.assertEqual(installed["libexpat"], "2.9.0-r0")
+        self.assertEqual(installed["docker-cli"], "29.8.2-r1")
+        self.assertEqual(installed["docker-cli-buildx"], "0.34.1-r2")
         self.assertEqual(installed["bash"], "5.3.9-r1")
         self.assertTrue(all("=" in token for addition in additions for token in addition.split()))
         self.assertIn(BASE_IMAGE, dispatcher)

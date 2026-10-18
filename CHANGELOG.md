@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bumped the pinned Alpine packages in `Dockerfile.btctl` after Alpine withdrew the old builds: `libexpat` `2.9.0-r0` (also in the embedded `btctl` bootstrap Dockerfile), `docker-cli` `29.8.2-r1` and `docker-cli-buildx` `0.34.1-r2`. `libexpat` `2.8.5-r0` was no longer served, which broke the `docker-smoke` bootstrap step on every branch.
 - Managed hub configuration retains a custom CWA login header across restarts and includes it in the deployment fingerprint. All proxy routes strip that assertion; shared validation rejects names that collide with managed context or credentials, including `User-Agent`.
 - A one-paragraph translation group is cached under a contract that includes the book glossary. The first visible paragraph is such a group, so adding or changing a glossary term previously kept serving its cached pre-glossary translation, and translations made with a glossary were stored under the no-glossary key. Entries already stored that way remain reachable only if the book's glossary is emptied again.
 - `/translate/stream` with an Anthropic-protocol provider (Anthropic, MiniMax) no longer waits for a second upstream slot while holding the first. With `BT_MAX_UPSTREAM_INFLIGHT=1` every such request failed with `work_budget_exhausted`, and two concurrent requests blocked each other until the queue timeout.
