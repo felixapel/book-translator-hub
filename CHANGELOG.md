@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-18
+
 ### Added
 
 - Optional `BT_EDGE_TRUSTED_PROXIES` trusts at most 32 exact operator-controlled immediate edge IPs at nginx, so browsers behind that edge have separate pre-auth admission keys. Empty configuration keeps socket-peer forwarding and existing managed fingerprints. Reader/API/session routes share one address and exact User-Agent; identity assertions are consistently stripped. Enabling, changing or clearing trust requires a new reader login and translator session. Split, hub and standalone Compose inputs are supported, with actual-nginx and native Chromium contract tests; external proxy and physical stock-reader acceptance remain release gates.
