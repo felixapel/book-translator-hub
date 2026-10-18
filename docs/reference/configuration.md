@@ -196,11 +196,23 @@ standalone Compose example accepts the same environment names.
 The managed proxy replaces inbound forwarding chains with one observed address.
 By default that is the immediate socket peer. To distinguish browsers behind one
 operator-controlled edge, set `BT_EDGE_TRUSTED_PROXIES` to its exact immediate
-IPv4/IPv6 peers, for example `192.0.2.8,2001:db8::8`. Bare addresses and `/32`
-or `/128` host networks are accepted; subnets, hostnames, zones and wildcards
-are rejected. The list is limited to 32 distinct peers and 4096 characters.
-Spaces between comma-separated elements are accepted; whole-value padding and
-empty elements are rejected. Validation canonicalizes and deduplicates peers.
+IPv4 peers, for example `192.0.2.8,198.51.100.8`. Bare addresses and `/32` host
+networks are accepted; subnets, hostnames, zones and wildcards are rejected. The
+list is limited to 32 distinct peers and 4096 characters. Spaces between
+comma-separated elements are accepted; whole-value padding and empty elements
+are rejected. Validation canonicalizes and deduplicates peers. The reader
+listener accepts IPv4 only, so IPv6 peers are rejected, as are unspecified and
+multicast addresses: no immediate peer connects from them. An edge reaching the
+proxy over IPv6 needs an IPv6 listener first.
+
+Trust only an address that nothing but the edge connects from. When the edge
+runs on the host and reaches a published reader port, it arrives from the
+Docker network gateway, and so do connections Docker relays from the host and
+from containers on other networks. Each of them could then choose its client
+address. Either attach the edge to the reader's Docker network and trust the
+edge container's address, or publish the reader port on `127.0.0.1` only
+before trusting the gateway. The proxy logs a warning at startup when a
+trusted peer is its own default gateway.
 
 The edge must put the browser address it observed last in the final outgoing
 `X-Forwarded-For` field, preferably emitting one normalized field. Only a

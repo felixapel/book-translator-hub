@@ -6,8 +6,8 @@ import ipaddress
 
 
 def parse_edge_trusted_proxies(value: object) -> tuple[str, ...]:
-    """Return a stable set of exact IP peers without exposing rejected input."""
-    error = "BT_EDGE_TRUSTED_PROXIES must be a bounded list of at most 32 exact IP peers"
+    """Return a stable set of exact IPv4 peers without exposing rejected input."""
+    error = "BT_EDGE_TRUSTED_PROXIES must be a bounded list of at most 32 exact IPv4 peers"
     if (
         not isinstance(value, str)
         or len(value) > 4096
@@ -29,6 +29,10 @@ def parse_edge_trusted_proxies(value: object) -> tuple[str, ...]:
         except ValueError:
             raise ValueError(error) from None
         if separator and prefix != str(parsed.max_prefixlen):
+            raise ValueError(error)
+        # The managed nginx listener is IPv4-only, and no immediate peer has an
+        # unspecified or multicast address. Trusting one would trust nobody.
+        if parsed.version != 4 or parsed.is_unspecified or parsed.is_multicast:
             raise ValueError(error)
         peers.add(str(parsed))
         if len(peers) > 32:

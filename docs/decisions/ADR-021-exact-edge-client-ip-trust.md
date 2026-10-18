@@ -16,8 +16,8 @@ same observed address and exact User-Agent.
 
 `BT_EDGE_TRUSTED_PROXIES` is optional and empty by default. It identifies only
 operator-controlled immediate edge peers for the managed nginx reader listener.
-It accepts comma-separated exact IPv4/IPv6 addresses or `/32` and `/128` host
-networks, with spaces around list elements. Validation rejects broad networks,
+It accepts comma-separated exact IPv4 addresses or `/32` host networks, with
+spaces around list elements. Validation rejects broad networks,
 DNS names, wildcards, Unix sockets, scoped addresses, control characters, empty
 elements and invalid addresses. Input is bounded to 4096 characters and 32
 distinct peers. Addresses are canonicalized, deduplicated and sorted before
@@ -55,6 +55,16 @@ Enabling, changing or clearing this setting changes CWA and plugin-session
 address binding. Operators must log in again and exchange a fresh plugin
 session. Authenticated subject quotas, request budgets, consent and coalescing
 keep their existing contracts.
+
+An exact address is only as exclusive as the network path to it. Docker relays
+host and other-network connections to a published port from the network
+gateway, so trusting the gateway trusts all of them. The renderer warns when a
+trusted peer is the container's default gateway, but does not refuse it: with
+the reader port published on `127.0.0.1` only, the gateway carries just the
+host's own connections. The reader listener binds IPv4 only, so IPv6 peers,
+including IPv4-mapped ones, are rejected along with unspecified and multicast
+addresses: none can ever match an immediate peer, and accepting them would leave
+trust silently off. Supporting an IPv6 edge needs an IPv6 listener first.
 
 This does not certify an arbitrary external edge or additional proxy chain.
 Exact stock-reader, proxy and physical browser acceptance remains required

@@ -71,7 +71,7 @@ class HubConfigTests(unittest.TestCase):
         values = dual_reader_environment()
         original = HubConfig.from_environment(values)
         values["BT_EDGE_TRUSTED_PROXIES"] = (
-            "2001:0db8::8/128, 192.0.2.8/32,192.0.2.8"
+            "198.51.100.8/32, 192.0.2.8/32,192.0.2.8"
         )
         configured = HubConfig.from_environment(values)
         for reader, baseline in zip(configured.readers, original.readers):
@@ -79,11 +79,14 @@ class HubConfigTests(unittest.TestCase):
             self.assertEqual(reader.environment["BT_TRUSTED_PROXIES"], "127.0.0.1/32")
             self.assertEqual(
                 reader.proxy_environment["BT_EDGE_TRUSTED_PROXIES"],
-                "192.0.2.8,2001:db8::8",
+                "192.0.2.8,198.51.100.8",
             )
 
     def test_invalid_edge_trust_fails_before_hub_runtime_preparation(self):
-        for value in ("192.0.2.0/24", "edge.example.test", "127.0.0.1\ninclude evil;"):
+        for value in (
+            "192.0.2.0/24", "edge.example.test", "127.0.0.1\ninclude evil;",
+            "2001:db8::8", "0.0.0.0",
+        ):
             with self.subTest(value=value):
                 values = dual_reader_environment()
                 values["BT_EDGE_TRUSTED_PROXIES"] = value

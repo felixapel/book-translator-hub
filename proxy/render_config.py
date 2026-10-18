@@ -39,6 +39,7 @@ _KAVITA_CERTIFIED_CONTRACTS = {
 }
 RESOLV_CONF = Path("/etc/resolv.conf")
 HOSTS_FILE = Path("/etc/hosts")
+ROUTE_FILE = Path("/proc/net/route")
 
 
 class ProxyConfigError(ValueError):
@@ -329,6 +330,46 @@ def _reader_upstream_routing(
     )
 
 
+def _default_gateways(route_file: Path) -> set[str]:
+    """IPv4 default gateways from a /proc/net/route table (little-endian hex)."""
+    try:
+        lines = route_file.read_text(encoding="ascii").splitlines()[1:]
+    except (OSError, UnicodeDecodeError):
+        return set()
+    gateways = set()
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 3 or fields[1] != "00000000":
+            continue
+        try:
+            raw = int(fields[2], 16).to_bytes(4, "little")
+        except (ValueError, OverflowError):
+            continue
+        gateways.add(str(ipaddress.IPv4Address(raw)))
+    return gateways
+
+
+def _edge_gateway_warning(
+    peers: tuple[str, ...], *, route_file: Path
+) -> str | None:
+    """Explain why trusting this container's gateway trusts more than the edge.
+
+    Docker relays connections from the host and from containers on other
+    networks to a published port from the network gateway, the same address
+    an edge running on the host has. Each of them could then choose its
+    client address. The value itself is never printed.
+    """
+    if not set(peers) & _default_gateways(route_file):
+        return None
+    return (
+        "BT_EDGE_TRUSTED_PROXIES includes this container's default gateway. "
+        "Docker relays host and other-container connections from that "
+        "address, so each of them can choose its client address. Trust the "
+        "edge container's own address instead, unless the reader port is "
+        "published on 127.0.0.1 only."
+    )
+
+
 def _atomic_write(output_path: Path, content: str) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -356,6 +397,9 @@ def render(template_path: Path, output_path: Path, env: Mapping[str, str]) -> No
         raise ProxyConfigError(str(exc)) from None
     edge_directives = ""
     if edge_peers:
+        warning = _edge_gateway_warning(edge_peers, route_file=ROUTE_FILE)
+        if warning:
+            print(f"[proxy-config] WARNING: {warning}", file=sys.stderr)
         edge_directives = "\n    ".join([
             *(f"set_real_ip_from {peer};" for peer in edge_peers),
             "real_ip_header X-Forwarded-For;",

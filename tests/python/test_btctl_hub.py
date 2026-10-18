@@ -195,19 +195,19 @@ class HubBtctlTests(unittest.TestCase):
             values = hub_values(Path(directory))
             baseline = HubPlan.from_config(HubInstallConfig.from_mapping(values, IDENTITY))
             plans = []
-            for peers in ("2001:0db8::8/128, 192.0.2.8/32", "192.0.2.8,2001:db8::8"):
+            for peers in ("198.51.100.8/32, 192.0.2.8/32", "192.0.2.8,198.51.100.8"):
                 values["BT_EDGE_TRUSTED_PROXIES"] = peers
                 config = HubInstallConfig.from_mapping(values, IDENTITY)
                 self.assertEqual(
                     config.environment["BT_EDGE_TRUSTED_PROXIES"],
-                    "192.0.2.8,2001:db8::8",
+                    "192.0.2.8,198.51.100.8",
                 )
                 plans.append(HubPlan.from_config(config))
             self.assertEqual(plans[0].config_fingerprint, plans[1].config_fingerprint)
             self.assertNotEqual(plans[0].config_fingerprint, baseline.config_fingerprint)
             self.assertEqual(
                 plans[0].to_dict()["environment"]["BT_EDGE_TRUSTED_PROXIES"],
-                "192.0.2.8,2001:db8::8",
+                "192.0.2.8,198.51.100.8",
             )
 
     def test_plan_is_schema_three_and_never_contains_provider_secrets(self):

@@ -308,21 +308,21 @@ class InstallConfigTests(unittest.TestCase):
     def test_edge_trust_is_canonical_proxy_only_authority_in_plan_and_fingerprint(self):
         configured = InstallConfig.from_mapping({
             **self.base,
-            "BT_EDGE_TRUSTED_PROXIES": "2001:0db8::2/128, 192.0.2.8/32,192.0.2.8",
+            "BT_EDGE_TRUSTED_PROXIES": "198.51.100.2/32, 192.0.2.8/32,192.0.2.8",
         }, self.identity)
         equivalent = InstallConfig.from_mapping({
-            **self.base, "BT_EDGE_TRUSTED_PROXIES": "192.0.2.8,2001:db8::2",
+            **self.base, "BT_EDGE_TRUSTED_PROXIES": "192.0.2.8,198.51.100.2",
         }, self.identity)
         default = InstallConfig.from_mapping(self.base, self.identity)
         self.assertEqual(configured.proxy_environment()["BT_EDGE_TRUSTED_PROXIES"],
-                         "192.0.2.8,2001:db8::2")
+                         "192.0.2.8,198.51.100.2")
         self.assertNotIn("BT_EDGE_TRUSTED_PROXIES", configured.api_environment())
         self.assertEqual(configured.api_environment(), default.api_environment())
         self.assertEqual(configured.public_contract()["edge_trusted_proxies"],
-                         ["192.0.2.8", "2001:db8::2"])
+                         ["192.0.2.8", "198.51.100.2"])
         selected_plan = DeploymentPlan.from_config(configured)
         self.assertEqual(selected_plan.proxy_environment["BT_EDGE_TRUSTED_PROXIES"],
-                         "192.0.2.8,2001:db8::2")
+                         "192.0.2.8,198.51.100.2")
         self.assertEqual(selected_plan.config_fingerprint,
                          DeploymentPlan.from_config(equivalent).config_fingerprint)
         self.assertNotEqual(selected_plan.config_fingerprint,
