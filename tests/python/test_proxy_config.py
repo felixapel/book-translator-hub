@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import json
 import subprocess
@@ -9,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -95,6 +98,9 @@ class ProxyConfigRendererTests(unittest.TestCase):
             "192.0.2.1,", ",192.0.2.1", "192.0.2.1,,192.0.2.2",
             "192.0.2.1\ninclude /tmp/evil;", "192.0.2.1\t", "192.0.2.1\x7f",
             "192.0.2.1; include /tmp/evil;", "192.0.2.1:8080", " 192.0.2.1",
+            # Never an immediate TCP peer of the IPv4 listener.
+            "0.0.0.0", "0.0.0.0/32", "::", "224.0.0.1", "ff02::1",
+            "::ffff:192.0.2.1",
             ",".join(f"192.0.2.{i}" for i in range(1, 34)),
             "192.0.2.1," * 500,
         )
@@ -560,6 +566,68 @@ class ReaderUpstreamRoutingTests(unittest.TestCase):
             ),
             "proxy_pass http://kavita:5000;",
         )
+
+
+class EdgeGatewayTrustTests(unittest.TestCase):
+    """Trusting the network gateway trusts every connection Docker relays."""
+
+    # /proc/net/route stores addresses as little-endian hex: 172.25.0.1.
+    ROUTES = (
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+        "eth0\t00000000\t010019AC\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"
+        "eth0\t000019AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
+    )
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT))
+        self.addCleanup(sys.path.remove, str(ROOT))
+        from proxy import render_config
+
+        self.render_config = render_config
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+        self.routes = self.directory / "route"
+        self.routes.write_text(self.ROUTES)
+
+    def test_trusting_the_default_gateway_is_reported_without_the_value(self):
+        warning = self.render_config._edge_gateway_warning(
+            ("192.0.2.8", "172.25.0.1"), route_file=self.routes
+        )
+        self.assertIn("BT_EDGE_TRUSTED_PROXIES", warning)
+        self.assertIn("gateway", warning)
+        self.assertNotIn("172.25.0.1", warning)
+
+    def test_other_peers_and_unreadable_routes_stay_quiet(self):
+        self.assertIsNone(self.render_config._edge_gateway_warning(
+            ("172.25.0.5", "2001:db8::1"), route_file=self.routes
+        ))
+        self.assertIsNone(self.render_config._edge_gateway_warning(
+            ("172.25.0.1",), route_file=self.directory / "missing"
+        ))
+
+    def test_render_warns_but_still_writes_the_configuration(self):
+        output = self.directory / "proxy.conf"
+        env = {
+            "CWA_UPSTREAM": "http://127.0.0.1:8083",
+            "BT_API_UPSTREAM": "http://127.0.0.1:8390",
+            "BT_PROXY_PORT": "8080",
+            "BT_UI_VERSION": "2.4.2",
+            "BT_PUBLIC_ORIGIN": "https://books.example.test",
+            "BT_CWA_MAX_BODY_SIZE": "2g",
+            "BT_CWA_IDENTITY_HEADER": "Remote-User",
+            "BT_BROWSER_AUTH_MODE": "cwa_session",
+            "BT_BROWSER_CREDENTIALS": "same-origin",
+            "BT_EDGE_TRUSTED_PROXIES": "172.25.0.1",
+        }
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(self.render_config, "ROUTE_FILE", self.routes),
+            contextlib.redirect_stderr(stderr),
+        ):
+            self.render_config.render(TEMPLATE, output, env)
+        self.assertIn("set_real_ip_from 172.25.0.1;", output.read_text())
+        self.assertIn("[proxy-config] WARNING:", stderr.getvalue())
 
 
 if __name__ == "__main__":

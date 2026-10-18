@@ -30,6 +30,14 @@ def parse_edge_trusted_proxies(value: object) -> tuple[str, ...]:
             raise ValueError(error) from None
         if separator and prefix != str(parsed.max_prefixlen):
             raise ValueError(error)
+        # No immediate TCP peer has these addresses; trusting one would
+        # silently trust nobody.
+        if (
+            parsed.is_unspecified
+            or parsed.is_multicast
+            or getattr(parsed, "ipv4_mapped", None) is not None
+        ):
+            raise ValueError(error)
         peers.add(str(parsed))
         if len(peers) > 32:
             raise ValueError(error)

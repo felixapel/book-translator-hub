@@ -201,6 +201,17 @@ or `/128` host networks are accepted; subnets, hostnames, zones and wildcards
 are rejected. The list is limited to 32 distinct peers and 4096 characters.
 Spaces between comma-separated elements are accepted; whole-value padding and
 empty elements are rejected. Validation canonicalizes and deduplicates peers.
+Unspecified, multicast and IPv4-mapped IPv6 addresses are rejected because no
+immediate peer connects from them.
+
+Trust only an address that nothing but the edge connects from. When the edge
+runs on the host and reaches a published reader port, it arrives from the
+Docker network gateway, and so do connections Docker relays from the host and
+from containers on other networks. Each of them could then choose its client
+address. Either attach the edge to the reader's Docker network and trust the
+edge container's address, or publish the reader port on `127.0.0.1` only
+before trusting the gateway. The proxy logs a warning at startup when a
+trusted peer is its own default gateway.
 
 The edge must put the browser address it observed last in the final outgoing
 `X-Forwarded-For` field, preferably emitting one normalized field. Only a

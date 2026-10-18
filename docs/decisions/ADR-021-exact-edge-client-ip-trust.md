@@ -56,6 +56,14 @@ address binding. Operators must log in again and exchange a fresh plugin
 session. Authenticated subject quotas, request budgets, consent and coalescing
 keep their existing contracts.
 
+An exact address is only as exclusive as the network path to it. Docker relays
+host and other-network connections to a published port from the network
+gateway, so trusting the gateway trusts all of them. The renderer warns when a
+trusted peer is the container's default gateway, but does not refuse it: with
+the reader port published on `127.0.0.1` only, the gateway carries just the
+host's own connections. Unspecified, multicast and IPv4-mapped addresses are
+rejected because they can never match an immediate peer.
+
 This does not certify an arbitrary external edge or additional proxy chain.
 Exact stock-reader, proxy and physical browser acceptance remains required
 before a runtime release tag, as specified by ADR-019 and the release runbook.
