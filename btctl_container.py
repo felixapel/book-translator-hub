@@ -19,6 +19,7 @@ from btctl_core import ConfigError, InstallConfig
 from btctl_hub import HubInstallConfig, is_hub_configuration
 from btctl_lifecycle import MigrationJournalStore
 from btctl_paths import (
+    host_storage_path,
     paths_overlap as _paths_overlap,
     storage_minimum as _storage_minimum,
     validate_mount_path as _validate_mount_text,
@@ -64,6 +65,9 @@ class MountSpec:
     path: Path
     mode: str
     identity: str
+    # Container path for an Unraid exclusive-share source; None binds `path`
+    # at the same path.
+    destination: Path | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in {"ro", "rw"}:
@@ -71,10 +75,19 @@ class MountSpec:
         _validate_mount_text(self.path, "mount path")
         if not _MOUNT_IDENTITY_RE.fullmatch(self.identity):
             raise ConfigError("mount source identity is invalid")
+        if self.destination is not None:
+            _validate_mount_text(self.destination, "mount destination")
 
     @classmethod
-    def capture(cls, path: Path, mode: str) -> "MountSpec":
-        return cls(path=path, mode=mode, identity=_path_identity(path))
+    def capture(
+        cls, path: Path, mode: str, destination: Path | None = None
+    ) -> "MountSpec":
+        return cls(
+            path=path,
+            mode=mode,
+            identity=_path_identity(path),
+            destination=destination,
+        )
 
 
 def _path_identity(path: Path) -> str:
@@ -152,7 +165,7 @@ class MountPlan:
             "\t".join(
                 (
                     "BTCTL_MOUNT_PLAN",
-                    "2",
+                    "3",
                     self.command,
                     "unraid",
                     self.environment_sha256,
@@ -161,6 +174,7 @@ class MountPlan:
         ]
         lines.extend(
             f"mount\t{mount.mode}\t{mount.path}\t{mount.identity}"
+            + ("" if mount.destination is None else f"\t{mount.destination}")
             for mount in self.mounts
         )
         if self.lock_source is not None:
@@ -211,6 +225,23 @@ def mount_source_for_path(
         command == "upgrade" and name == "data"
     ) else path
     return _nearest_existing_directory(required, minimum)
+
+
+def _container_path(configured: Path, host: Path, source: Path) -> Path | None:
+    """Return where a host mount source appears inside the operator.
+
+    Paths below an Unraid exclusive-share link are bound from the pool path to
+    the configured /mnt/user path, so the operator sees exactly its
+    configuration. Every other source is bound at its own path.
+    """
+    if configured == host:
+        return None
+    share = _storage_minimum(configured)
+    try:
+        relative = source.relative_to(host_storage_path(share))
+    except ValueError as exc:
+        raise ConfigError("exclusive-share mount source left its share") from exc
+    return share.joinpath(*relative.parts)
 
 
 def legacy_data_path(
@@ -317,26 +348,38 @@ def create_mount_plan(
             Path(legacy_text), "BT_LEGACY_DATA_DIR"
         )
 
-    for label, managed in paths.items():
+    # Exclusive-share aliases are compared and mounted by their pool paths.
+    host_paths = {name: host_storage_path(path) for name, path in paths.items()}
+    for label, managed in host_paths.items():
         if _paths_overlap(checkout, managed):
             raise ConfigError(f"{label} path must not overlap the Git checkout")
-    overlap_names = list(paths)
+    overlap_names = list(host_paths)
     for index, left_name in enumerate(overlap_names):
         for right_name in overlap_names[index + 1 :]:
-            if _paths_overlap(paths[left_name], paths[right_name]):
+            if _paths_overlap(host_paths[left_name], host_paths[right_name]):
                 raise ConfigError(
                     f"{left_name} and {right_name} paths must not overlap"
                 )
 
-    mounts: dict[Path, str] = {checkout: "ro", environment: "ro"}
+    # Keyed by (host source, container destination); None binds the source at
+    # its own path.
+    mounts: dict[tuple[Path, Path | None], str] = {
+        (checkout, None): "ro",
+        (environment, None): "ro",
+    }
 
-    def add_mount(source: Path, mode: str) -> None:
-        previous = mounts.get(source)
+    def record_mount(source: Path, destination: Path | None, mode: str) -> None:
+        previous = mounts.get((source, destination))
         if previous is not None and previous != mode:
             raise ConfigError(
                 "least-privilege mounts cannot represent overlapping read/write paths"
             )
-        mounts[source] = mode
+        mounts[(source, destination)] = mode
+
+    def add_mount(name: str, source: Path, mode: str) -> None:
+        record_mount(
+            source, _container_path(paths[name], host_paths[name], source), mode
+        )
 
     access_modes = dict(access)
     lock_source: Path | None = None
@@ -346,34 +389,53 @@ def create_mount_plan(
     for name, mode in access:
         if name not in paths:
             raise ConfigError(f"{command} requires BT_LEGACY_DATA_DIR")
-        desired = paths[name]
+        desired = host_paths[name]
         minimum = Path("/boot") if name == "template" else _storage_minimum(desired)
         source = mount_source_for_path(command, name, desired, minimum)
         if name == "state" and desired.exists():
-            add_mount(desired, mode)
+            add_mount(name, desired, mode)
         elif name == "state" and mode == "ro":
             # The dedicated lock mount is enough to serialize a diagnostic
             # against a missing state directory. Avoid exposing its siblings.
             continue
         else:
-            add_mount(source, mode)
+            add_mount(name, source, mode)
 
     # A missing writable state directory or an upgrade staging directory can
     # require an ancestor bind. Override that broad bind for every existing
     # managed path that this command must only read (or must not access).
     writable_sources = tuple(
-        source for source, mode in mounts.items() if mode == "rw"
+        source for (source, _), mode in mounts.items() if mode == "rw"
     )
-    for name, managed in paths.items():
+    for name, managed in host_paths.items():
         if not managed.exists() or access_modes.get(name) == "rw":
             continue
         if any(source in managed.parents for source in writable_sources):
-            add_mount(managed, "ro")
+            add_mount(name, managed, "ro")
+
+    # The checkout and environment are bound read-only at their own (pool)
+    # paths. A writable ancestor bound at an exclusive-share alias would expose
+    # them again below that alias, so shadow them read-only there as well.
+    for (source, destination), mode in tuple(mounts.items()):
+        if mode != "rw" or destination is None:
+            continue
+        for protected in (checkout, environment):
+            if source in protected.parents:
+                record_mount(
+                    protected,
+                    destination.joinpath(*protected.relative_to(source).parts),
+                    "ro",
+                )
 
     ordered = tuple(
-        MountSpec.capture(path, mode)
-        for path, mode in sorted(
-            mounts.items(), key=lambda item: (len(item[0].parts), str(item[0]))
+        MountSpec.capture(path, mode, destination)
+        for (path, destination), mode in sorted(
+            mounts.items(),
+            key=lambda item: (
+                len(item[0][0].parts),
+                str(item[0][0]),
+                str(item[0][1] or ""),
+            ),
         )
     )
     return MountPlan(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -18,6 +19,16 @@ from btctl_container import (
     mount_source_for_path,
     validate_storage_path,
 )
+from btctl_paths import host_storage_path, validate_unraid_config_paths
+
+
+def _exclusive_share_root(directory: str, link: str = "../cache/appdata") -> Path:
+    """Build a fake /mnt whose appdata share is an Unraid exclusive-share link."""
+    storage_root = Path(directory) / "mnt"
+    (storage_root / "cache" / "appdata" / "hub").mkdir(parents=True)
+    (storage_root / "user").mkdir()
+    (storage_root / "user" / "appdata").symlink_to(link)
+    return storage_root
 
 
 class ContainerMountMatrixTests(unittest.TestCase):
@@ -91,7 +102,7 @@ class ContainerMountMatrixTests(unittest.TestCase):
 
         self.assertEqual(
             rendered.splitlines()[0],
-            f"BTCTL_MOUNT_PLAN\t2\tdoctor\tunraid\t{'a' * 64}",
+            f"BTCTL_MOUNT_PLAN\t3\tdoctor\tunraid\t{'a' * 64}",
         )
         self.assertRegex(rendered, rf"mount\tro\t{checkout}\t[0-9:]+[0-9a-f:]+")
         self.assertRegex(
@@ -284,6 +295,217 @@ class ContainerPathPolicyTests(unittest.TestCase):
                         "BT_STATE_DIR",
                         storage_root=storage_root,
                     )
+
+    def test_exclusive_share_link_is_validated_through_its_pool_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage_root = _exclusive_share_root(directory)
+            (storage_root / "user" / "media").mkdir()
+            configured = storage_root / "user" / "appdata" / "hub" / "state"
+
+            accepted = validate_storage_path(
+                configured, "BT_STATE_DIR", storage_root=storage_root
+            )
+
+            self.assertEqual(accepted, configured)
+            cases = {
+                configured: storage_root / "cache" / "appdata" / "hub" / "state",
+                storage_root / "user" / "appdata": storage_root / "cache" / "appdata",
+                storage_root / "user" / "media" / "x": storage_root / "user" / "media" / "x",
+                storage_root / "cache" / "appdata" / "x": storage_root / "cache" / "appdata" / "x",
+                Path(directory) / "srv" / "x": Path(directory) / "srv" / "x",
+            }
+            for path, expected in cases.items():
+                with self.subTest(path=path):
+                    self.assertEqual(
+                        host_storage_path(path, storage_root=storage_root), expected
+                    )
+
+    def test_share_links_other_than_the_exact_unraid_form_are_rejected(self):
+        def linked_pool(root: Path) -> None:
+            (root / "real-cache").mkdir()
+            shutil.move(root / "cache" / "appdata", root / "real-cache" / "appdata")
+            (root / "cache").rmdir()
+            (root / "cache").symlink_to("real-cache")
+
+        def linked_share(root: Path) -> None:
+            shutil.move(root / "cache" / "appdata", root / "cache" / "elsewhere")
+            (root / "cache" / "appdata").symlink_to("elsewhere")
+
+        def file_share(root: Path) -> None:
+            shutil.rmtree(root / "cache" / "appdata")
+            (root / "cache" / "appdata").write_text("", encoding="utf-8")
+
+        def other_share(root: Path) -> None:
+            (root / "cache" / "other" / "hub").mkdir(parents=True)
+
+        def reserved_root(root: Path) -> None:
+            (root / "user0" / "appdata" / "hub").mkdir(parents=True)
+
+        def nested_pool(root: Path) -> None:
+            (root / "cache" / "sub" / "appdata" / "hub").mkdir(parents=True)
+
+        cases = (
+            ("absolute target", None, None),
+            ("other share", "../cache/other", other_share),
+            ("reserved root", "../user0/appdata", reserved_root),
+            ("parent escape", "../../cache/appdata", None),
+            ("non-parent prefix", "media/cache/appdata", None),
+            ("bare pool name", "cache", None),
+            ("trailing slash", "../cache/appdata/", None),
+            ("dot component", "../cache/./appdata", None),
+            ("nested pool", "../cache/sub/appdata", nested_pool),
+            ("missing pool", "../missing/appdata", None),
+            ("linked pool", "../cache/appdata", linked_pool),
+            ("linked share directory", "../cache/appdata", linked_share),
+            ("file share", "../cache/appdata", file_share),
+        )
+        for name, link, prepare in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                storage_root = Path(directory) / "mnt"
+                target = link or str(storage_root / "cache" / "appdata")
+                storage_root = _exclusive_share_root(directory, target)
+                if prepare is not None:
+                    prepare(storage_root)
+                configured = storage_root / "user" / "appdata" / "hub" / "state"
+
+                with self.assertRaises(ConfigError):
+                    validate_storage_path(
+                        configured, "BT_STATE_DIR", storage_root=storage_root
+                    )
+                with self.assertRaises(ConfigError):
+                    host_storage_path(configured, storage_root=storage_root)
+
+    def test_symlinks_below_an_exclusive_share_are_still_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage_root = _exclusive_share_root(directory)
+            pool_share = storage_root / "cache" / "appdata"
+            (pool_share / "real").mkdir()
+            (pool_share / "linked").symlink_to("real", target_is_directory=True)
+
+            with self.assertRaisesRegex(ConfigError, "symbolic link"):
+                validate_storage_path(
+                    storage_root / "user" / "appdata" / "linked" / "state",
+                    "BT_STATE_DIR",
+                    storage_root=storage_root,
+                )
+
+    def _exclusive_share_plan(
+        self,
+        directory: str,
+        command: str,
+        *,
+        checkout: Path | None = None,
+        state: str = "state",
+    ) -> tuple[MountPlan, Path, Path]:
+        storage_root = _exclusive_share_root(directory)
+        alias = storage_root / "user" / "appdata" / "hub"
+        pool = storage_root / "cache" / "appdata" / "hub"
+        for name in ("data", "backups"):
+            (pool / name).mkdir()
+        root = Path(directory)
+        checkout = checkout or root / "checkout"
+        checkout.mkdir(parents=True, exist_ok=True)
+        environment = root / "install.env"
+        environment.write_text("BT_INSTALL_PROFILE=unraid\n", encoding="utf-8")
+        environment.chmod(0o600)
+        template = root / "boot" / "templates-user"
+        template.mkdir(parents=True)
+        lock = root / "lock"
+        lock.mkdir()
+        config = SimpleNamespace(
+            install_profile="unraid",
+            state_dir=str(alias / state),
+            data_dir=str(alias / "data"),
+            backup_dir=str(alias / "backups"),
+            unraid_template_dir=str(template),
+        )
+        with (
+            mock.patch("btctl_paths.STORAGE_ROOT", storage_root),
+            mock.patch("btctl_container.HOST_LOCK_SOURCE", lock),
+            mock.patch("btctl_container._validate_repository", return_value=checkout),
+            mock.patch(
+                "btctl_container._config_for_command",
+                return_value=(config, {}),
+            ),
+            mock.patch(
+                "btctl_container._validate_template_path",
+                side_effect=lambda path: path,
+            ),
+        ):
+            plan = create_mount_plan(command, checkout, environment, "a" * 40)
+        return plan, pool, alias
+
+    def test_exclusive_share_paths_bind_the_pool_source_at_the_configured_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan, pool, alias = self._exclusive_share_plan(directory, "install")
+            checkout = Path(directory) / "checkout"
+
+            mounts = {(mount.path, mount.destination): mount.mode for mount in plan.mounts}
+            rendered = plan.render()
+
+        # The missing state directory needs its parent, so the hub directory
+        # is writable; the unrelated existing backup stays read-only.
+        self.assertEqual(mounts[(pool, alias)], "rw")
+        self.assertEqual(mounts[(pool / "data", alias / "data")], "rw")
+        self.assertEqual(mounts[(pool / "backups", alias / "backups")], "ro")
+        self.assertEqual(mounts[(checkout, None)], "ro")
+        self.assertRegex(
+            rendered,
+            rf"(?m)^mount\trw\t{pool / 'data'}\t[0-9]+:[0-9]+:[0-9a-f]+:[0-9]+:[0-7]+:[0-9]+"
+            rf"\t{alias / 'data'}$",
+        )
+        self.assertRegex(rendered, rf"(?m)^mount\tro\t{checkout}\t[0-9:a-f]+$")
+
+    def test_writable_alias_ancestor_keeps_the_checkout_read_only_there(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pool_hub = Path(directory) / "mnt" / "cache" / "appdata" / "hub"
+            checkout = pool_hub / "releases" / "abc"
+            plan, pool, alias = self._exclusive_share_plan(
+                directory, "install", checkout=checkout
+            )
+
+            mounts = {(mount.path, mount.destination): mount.mode for mount in plan.mounts}
+
+        # A missing state directory makes install bind its parent writable at
+        # the alias; the checkout below it must stay read-only there too.
+        self.assertEqual(mounts[(pool, alias)], "rw")
+        self.assertEqual(mounts[(checkout, None)], "ro")
+        self.assertEqual(mounts[(checkout, alias / "releases" / "abc")], "ro")
+
+    def test_exclusive_share_aliases_cannot_hide_a_checkout_overlap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = (
+                Path(directory) / "mnt" / "cache" / "appdata" / "hub" / "releases" / "abc"
+            )
+            with self.assertRaisesRegex(ConfigError, "overlap the Git checkout"):
+                self._exclusive_share_plan(
+                    directory,
+                    "doctor",
+                    checkout=checkout,
+                    state="releases/abc/state",
+                )
+
+    def test_native_path_policy_sees_a_checkout_overlap_through_an_alias(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage_root = _exclusive_share_root(directory)
+            alias = storage_root / "user" / "appdata" / "hub"
+            checkout = storage_root / "cache" / "appdata" / "hub" / "releases" / "abc"
+            checkout.mkdir(parents=True)
+            template = Path(directory) / "templates-user"
+            config = SimpleNamespace(
+                install_profile="unraid",
+                state_dir=str(alias / "releases" / "abc" / "state"),
+                data_dir=str(alias / "data"),
+                backup_dir=str(alias / "backups"),
+                unraid_template_dir=str(template),
+            )
+
+            with (
+                mock.patch("btctl_paths.STORAGE_ROOT", storage_root),
+                mock.patch("btctl_paths.TEMPLATE_ROOT", template),
+                self.assertRaisesRegex(ConfigError, "overlap the Git checkout"),
+            ):
+                validate_unraid_config_paths(config, {}, checkout)
 
     def test_uninstall_mounts_only_state_data_template_and_dedicated_lock(self):
         with tempfile.TemporaryDirectory() as directory:
