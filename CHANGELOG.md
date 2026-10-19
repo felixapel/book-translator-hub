@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Unraid exclusive shares no longer break `btctl`. With **Permit exclusive shares** enabled, Unraid turns `/mnt/user/<share>` into the link `../<pool>/<share>`, and every lifecycle command rejected paths below it: the dispatcher refused the environment file ("must use one canonical path without symbolic components") and the mount planner refused `BT_STATE_DIR` ("Unraid share must be one real directory"). `btctl` now follows only that exact link. It validates the pool directory, compares overlaps on pool paths and binds the pool path to the configured `/mnt/user` path, so the operator, state and Docker binds keep the configured paths. Every other symbolic link is still refused. The stock-Unraid mount plan protocol is now version 3.
+
 ## [2.5.0] - 2026-10-18
 
 ### Added

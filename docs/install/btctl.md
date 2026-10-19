@@ -79,6 +79,12 @@ through the trusted operator's private group. For Unraid, use existing
 `BT_UNRAID_TEMPLATE_DIR=/boot/config/plugins/dockerMan/templates-user`.
 `btctl` refuses misspelled share/pool roots.
 
+An exclusive share (Settings → Global Share Settings → Permit exclusive shares)
+turns `/mnt/user/<share>` into Unraid's link `../<pool>/<share>`. `btctl`
+follows only that exact link: it checks the pool directory, binds it to the
+configured `/mnt/user` path and keeps refusing every other symbolic link. The
+same environment file therefore works whether or not the share is exclusive.
+
 New Compose installs record split state schema 3. Their generated JSON contains
 only paths to raw mode-`0600` `api.env` and `proxy.env` files, never provider
 credentials. Former schema-2 inline-environment deployments remain available

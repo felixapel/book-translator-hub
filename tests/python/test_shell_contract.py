@@ -10,6 +10,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _dispatcher_functions(*names):
+    """Return the exact bash definitions of btctl helper functions."""
+    source = (ROOT / "btctl").read_text(encoding="utf-8")
+    blocks = []
+    for name in names:
+        match = re.search(rf"(?ms)^{name}\(\) \{{\n.*?^\}}\n", source)
+        if match is None:
+            raise AssertionError(f"btctl does not define {name}()")
+        blocks.append(match.group(0))
+    return "".join(blocks)
+
+
+def _exclusive_share_root(directory, link="../cache/appdata"):
+    storage_root = Path(directory) / "mnt"
+    (storage_root / "cache" / "appdata" / "hub").mkdir(parents=True)
+    (storage_root / "user").mkdir()
+    (storage_root / "user" / "appdata").symlink_to(link)
+    return storage_root
+
+
 class ShellContractTests(unittest.TestCase):
     def test_bootstrap_files_are_forced_to_linux_line_endings(self):
         attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
@@ -167,6 +187,167 @@ class ShellContractTests(unittest.TestCase):
         self.assertNotIn("docker build", source)
         self.assertNotIn("docker pull", source)
         self.assertNotIn("ghcr.io", source)
+
+
+class DispatcherExclusiveShareTests(unittest.TestCase):
+    FUNCTIONS = (
+        "fail",
+        "unraid_exclusive_share_source",
+        "canonical_existing_file",
+        "validate_planned_destination",
+    )
+
+    def _run(self, storage_root, script, *arguments):
+        prelude = (
+            "set -euo pipefail\n"
+            "EX_USAGE=64\n"
+            'UNRAID_STORAGE_ROOT="$1"\n'
+            "shift\n"
+        )
+        return subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                prelude + _dispatcher_functions(*self.FUNCTIONS) + script,
+                "btctl-test",
+                str(storage_root),
+                *arguments,
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def test_exclusive_share_source_maps_only_the_exact_unraid_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage_root = _exclusive_share_root(directory)
+            (storage_root / "user" / "media").mkdir()
+            cases = {
+                storage_root / "user" / "appdata" / "hub" / "x.env": str(
+                    storage_root / "cache" / "appdata" / "hub" / "x.env"
+                ),
+                storage_root / "user" / "appdata": str(storage_root / "cache" / "appdata"),
+                storage_root / "user" / "media" / "x.env": None,
+                storage_root / "cache" / "appdata" / "x.env": None,
+                storage_root / "user" / ".." / "cache": None,
+            }
+            for candidate, expected in cases.items():
+                with self.subTest(candidate=candidate):
+                    completed = self._run(
+                        storage_root, 'unraid_exclusive_share_source "$1"', str(candidate)
+                    )
+                    if expected is None:
+                        self.assertNotEqual(completed.returncode, 0)
+                        self.assertEqual(completed.stdout, "")
+                    else:
+                        self.assertEqual(completed.returncode, 0, completed.stderr)
+                        self.assertEqual(completed.stdout, expected + "\n")
+
+    def test_share_links_other_than_the_exact_unraid_form_are_not_followed(self):
+        def linked_pool(root):
+            (root / "real-cache").mkdir()
+            (root / "cache" / "appdata").rename(root / "real-cache" / "appdata")
+            (root / "cache").rmdir()
+            (root / "cache").symlink_to("real-cache")
+
+        def linked_share(root):
+            (root / "cache" / "appdata").rename(root / "cache" / "elsewhere")
+            (root / "cache" / "appdata").symlink_to("elsewhere")
+
+        cases = (
+            ("absolute target", None, None),
+            ("other share", "../cache/other", lambda root: (root / "cache" / "other").mkdir()),
+            ("reserved root", "../user0/appdata", lambda root: (root / "user0" / "appdata").mkdir(parents=True)),
+            ("parent escape", "../../cache/appdata", None),
+            ("non-parent prefix", "media/cache/appdata", None),
+            ("bare pool name", "cache", None),
+            ("trailing slash", "../cache/appdata/", None),
+            ("dot component", "../cache/./appdata", None),
+            ("nested pool", "../cache/sub/appdata", lambda root: (root / "cache" / "sub" / "appdata").mkdir(parents=True)),
+            ("missing pool", "../missing/appdata", None),
+            ("linked pool", "../cache/appdata", linked_pool),
+            ("linked share directory", "../cache/appdata", linked_share),
+        )
+        for name, link, prepare in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                target = link or str(Path(directory) / "mnt" / "cache" / "appdata")
+                storage_root = _exclusive_share_root(directory, target)
+                if prepare is not None:
+                    prepare(storage_root)
+
+                completed = self._run(
+                    storage_root,
+                    'unraid_exclusive_share_source "$1"',
+                    str(storage_root / "user" / "appdata" / "hub" / "x.env"),
+                )
+
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertEqual(completed.stdout, "")
+
+    def test_environment_file_may_live_below_an_exclusive_share(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage_root = _exclusive_share_root(directory)
+            environment = storage_root / "cache" / "appdata" / "hub" / "install.env"
+            environment.write_text("BT_INSTALL_PROFILE=unraid\n", encoding="utf-8")
+            (storage_root / "user" / "linked").symlink_to("../cache/appdata")
+
+            accepted = self._run(
+                storage_root,
+                'canonical_existing_file "$1" "environment file"',
+                str(storage_root / "user" / "appdata" / "hub" / "install.env"),
+            )
+            (storage_root / "cache" / "appdata" / "inner").symlink_to("hub")
+            rejected = {
+                "non-exclusive share link": self._run(
+                    storage_root,
+                    'canonical_existing_file "$1" "environment file"',
+                    str(storage_root / "user" / "linked" / "hub" / "install.env"),
+                ),
+                "link below the pool share": self._run(
+                    storage_root,
+                    'canonical_existing_file "$1" "environment file"',
+                    str(storage_root / "user" / "appdata" / "inner" / "install.env"),
+                ),
+            }
+
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertEqual(accepted.stdout, f"{environment}\n")
+        for name, completed in rejected.items():
+            with self.subTest(case=name):
+                self.assertEqual(completed.returncode, 64)
+                self.assertIn("without symbolic components", completed.stderr)
+
+    def test_planned_destination_must_be_the_exclusive_alias_of_its_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage_root = _exclusive_share_root(directory)
+            pool_hub = storage_root / "cache" / "appdata" / "hub"
+            (pool_hub / "data").mkdir()
+            (storage_root / "cache" / "appdata" / "other").mkdir()
+            alias_hub = storage_root / "user" / "appdata" / "hub"
+            cases = (
+                ("same path", pool_hub / "data", pool_hub / "data", True),
+                ("exclusive alias", pool_hub / "data", alias_hub / "data", True),
+                ("alias of another source", pool_hub / "data", storage_root / "user" / "appdata" / "other", False),
+                ("unrelated destination", pool_hub / "data", Path(directory) / "etc", False),
+                ("parent traversal", pool_hub / "data", alias_hub / "data" / ".." / "data", False),
+                ("mount delimiter", pool_hub / "data", alias_hub / "da,ta", False),
+                ("tab", pool_hub / "data", alias_hub / "da\tta", False),
+                ("newline", pool_hub / "data", alias_hub / "da\nta", False),
+            )
+            for name, source, destination, valid in cases:
+                with self.subTest(case=name):
+                    completed = self._run(
+                        storage_root,
+                        'validate_planned_destination "$1" "$2"',
+                        str(source),
+                        str(destination),
+                    )
+                    if valid:
+                        self.assertEqual(completed.returncode, 0, completed.stderr)
+                    else:
+                        self.assertEqual(completed.returncode, 1)
+                        self.assertIn("mount planner emitted", completed.stderr)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

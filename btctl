@@ -9,6 +9,7 @@ EX_NOPERM=77
 SCRIPT_DIR="$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 DOCKER_BIN="${BTCTL_DOCKER_BIN:-docker}"
 HOST_LOCK_DIRECTORY=/run/cwa-translate-btctl-locks
+UNRAID_STORAGE_ROOT=/mnt
 
 fail() {
     local status="$1"
@@ -97,12 +98,44 @@ if [ "$repository_argument" -eq 0 ]; then
     operator_arguments=(--repository "$SCRIPT_DIR" "${operator_arguments[@]}")
 fi
 
+# Print the pool path behind one Unraid exclusive-share alias. Unraid publishes
+# an exclusive share only as /mnt/user/<share> -> ../<pool>/<share>; any other
+# link shape, or a path outside such a share, returns non-zero.
+unraid_exclusive_share_source() {
+    local candidate="$1"
+    local relative share rest link target pool
+    case "$candidate" in
+        "$UNRAID_STORAGE_ROOT"/user/?*) ;;
+        *) return 1 ;;
+    esac
+    relative="${candidate#"$UNRAID_STORAGE_ROOT"/user/}"
+    share="${relative%%/*}"
+    rest="${relative#"$share"}"
+    link="$UNRAID_STORAGE_ROOT/user/$share"
+    [ -L "$link" ] || return 1
+    target="$(readlink -- "$link")" || return 1
+    pool="${target#../}"
+    pool="${pool%/"$share"}"
+    [ "$target" = "../$pool/$share" ] || return 1
+    case "$pool" in
+        ''|.|..|*/*|user|user0|disks|remotes|addons|rootshare) return 1 ;;
+    esac
+    [ -d "$UNRAID_STORAGE_ROOT/$pool" ] && [ ! -L "$UNRAID_STORAGE_ROOT/$pool" ] \
+        && [ -d "$UNRAID_STORAGE_ROOT/$pool/$share" ] \
+        && [ ! -L "$UNRAID_STORAGE_ROOT/$pool/$share" ] \
+        || return 1
+    printf '%s\n' "$UNRAID_STORAGE_ROOT/$pool/$share$rest"
+}
+
 canonical_existing_file() {
     local candidate="$1"
     local label="$2"
-    local parent base canonical
+    local parent base canonical alias_source
     [ "${candidate#/}" != "$candidate" ] \
         || fail "$EX_USAGE" "$label must be an absolute path"
+    if alias_source="$(unraid_exclusive_share_source "$candidate")"; then
+        candidate="$alias_source"
+    fi
     [ ! -L "$candidate" ] && [ -f "$candidate" ] \
         || fail "$EX_USAGE" "$label must be one real regular file"
     parent="$(CDPATH= cd -P -- "$(dirname -- "$candidate")" && pwd -P)" \
@@ -402,6 +435,7 @@ render_mount_plan "$temporary/mount-plan" \
 final_mounts=()
 planned_sources=()
 planned_identities=()
+planned_destinations=()
 socket_required=0
 socket_records=0
 lock_records=0
@@ -430,6 +464,22 @@ validate_planned_path() {
             || fail 1 "mount planner emitted a non-canonical file"
     fi
 }
+# A planned bind may target the configured /mnt/user path only when that path
+# is the exclusive-share alias of its exact pool source.
+validate_planned_destination() {
+    local source="$1"
+    local destination="$2"
+    if [ "$destination" = "$source" ]; then
+        return 0
+    fi
+    case "$destination" in
+        *','*|*$'\n'*|*$'\r'*|*$'\t'*)
+            fail 1 "mount planner emitted an unsafe Docker mount path"
+            ;;
+    esac
+    [ "$(unraid_exclusive_share_source "$destination")" = "$source" ] \
+        || fail 1 "mount planner emitted an invalid exclusive-share destination"
+}
 validate_planned_identity() {
     local candidate="$1"
     local expected="$2"
@@ -445,7 +495,7 @@ while IFS=$'\t' read -r record first second fourth fifth extra; do
     ((line_number += 1))
     if [ "$line_number" -eq 1 ]; then
         [ "$record" = "BTCTL_MOUNT_PLAN" ] \
-            && [ "$first" = "2" ] \
+            && [ "$first" = "3" ] \
             && [ "$second" = "$command" ] \
             && [ "$fourth" = "unraid" ] \
             && [ "$fifth" = "$environment_sha256" ] \
@@ -456,23 +506,29 @@ while IFS=$'\t' read -r record first second fourth fifth extra; do
     case "$record:$first" in
         mount:ro)
             [ -n "$second" ] || fail 1 "mount planner emitted an empty path"
-            [ -n "$fourth" ] && [ -z "$fifth" ] && [ -z "$extra" ] \
+            [ -n "$fourth" ] && [ -z "$extra" ] \
                 || fail 1 "mount planner emitted an invalid mount record"
+            destination="${fifth:-$second}"
             validate_planned_path "$second"
             validate_planned_identity "$second" "$fourth"
+            validate_planned_destination "$second" "$destination"
             planned_sources+=("$second")
             planned_identities+=("$fourth")
-            final_mounts+=(--mount "type=bind,src=$second,dst=$second,readonly")
+            planned_destinations+=("$destination")
+            final_mounts+=(--mount "type=bind,src=$second,dst=$destination,readonly")
             ;;
         mount:rw)
             [ -n "$second" ] || fail 1 "mount planner emitted an empty path"
-            [ -n "$fourth" ] && [ -z "$fifth" ] && [ -z "$extra" ] \
+            [ -n "$fourth" ] && [ -z "$extra" ] \
                 || fail 1 "mount planner emitted an invalid mount record"
+            destination="${fifth:-$second}"
             validate_planned_path "$second"
             validate_planned_identity "$second" "$fourth"
+            validate_planned_destination "$second" "$destination"
             planned_sources+=("$second")
             planned_identities+=("$fourth")
-            final_mounts+=(--mount "type=bind,src=$second,dst=$second")
+            planned_destinations+=("$destination")
+            final_mounts+=(--mount "type=bind,src=$second,dst=$destination")
             ;;
         lock:ro)
             [ -n "$second" ] || fail 1 "mount planner emitted an empty lock source"
@@ -486,6 +542,7 @@ while IFS=$'\t' read -r record first second fourth fifth extra; do
             validate_planned_identity "$second" "$fifth"
             planned_sources+=("$second")
             planned_identities+=("$fifth")
+            planned_destinations+=("$second")
             final_mounts+=(
                 --mount "type=bind,src=$second,dst=$fourth,readonly"
             )
@@ -534,6 +591,8 @@ for ((index = 0; index < ${#planned_sources[@]}; index += 1)); do
     validate_planned_path "${planned_sources[$index]}"
     validate_planned_identity \
         "${planned_sources[$index]}" "${planned_identities[$index]}"
+    validate_planned_destination \
+        "${planned_sources[$index]}" "${planned_destinations[$index]}"
 done
 
 final_operator_arguments=()
