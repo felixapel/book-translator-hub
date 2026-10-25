@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/translate` and `/translate/stream` load the book glossary once per request instead of twice, and a cache lookup probes the single-text contract once when it equals the one-paragraph batch contract.
 - Startup logs a warning when `BT_LOCAL_URL` resolves only to public addresses, because the reader labels that provider local and uses it as a fallback without remote-fallback consent.
 
+### Security
+
+- Updated `certifi` to 2026.10.23 (PYSEC-2026-4320) and the development-only `undici` to 8.12.3 (GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472, GHSA-xjj6-f33q-929c). Both advisories appeared after the 2.5.0 candidate and failed the dependency audits.
+
 ### Fixed
 
 - Unraid exclusive shares no longer break `btctl`. With **Permit exclusive shares** enabled, Unraid turns `/mnt/user/<share>` into the link `../<pool>/<share>`, and every lifecycle command rejected paths below it: the dispatcher refused the environment file ("must use one canonical path without symbolic components") and the mount planner refused `BT_STATE_DIR` ("Unraid share must be one real directory"). `btctl` now follows only that exact link. It validates the pool directory, compares overlaps on pool paths and binds the pool path to the configured `/mnt/user` path, so the operator, state and Docker binds keep the configured paths. Every other symbolic link is still refused. The stock-Unraid mount plan protocol is now version 3.
