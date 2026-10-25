@@ -7,11 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Unraid exclusive shares no longer break `btctl`. With **Permit exclusive shares** enabled, Unraid turns `/mnt/user/<share>` into the link `../<pool>/<share>`, and every lifecycle command rejected paths below it: the dispatcher refused the environment file ("must use one canonical path without symbolic components") and the mount planner refused `BT_STATE_DIR` ("Unraid share must be one real directory"). `btctl` now follows only that exact link. It validates the pool directory, compares overlaps on pool paths and binds the pool path to the configured `/mnt/user` path, so the operator, state and Docker binds keep the configured paths. Every other symbolic link is still refused. The stock-Unraid mount plan protocol is now version 3.
-
-## [2.5.0] - 2026-10-18
+## [2.5.0] - 2026-10-25
 
 ### Added
 
@@ -27,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Unraid exclusive shares no longer break `btctl`. With **Permit exclusive shares** enabled, Unraid turns `/mnt/user/<share>` into the link `../<pool>/<share>`, and every lifecycle command rejected paths below it: the dispatcher refused the environment file ("must use one canonical path without symbolic components") and the mount planner refused `BT_STATE_DIR` ("Unraid share must be one real directory"). `btctl` now follows only that exact link. It validates the pool directory, compares overlaps on pool paths and binds the pool path to the configured `/mnt/user` path, so the operator, state and Docker binds keep the configured paths. Every other symbolic link is still refused. The stock-Unraid mount plan protocol is now version 3.
 - `BT_EDGE_TRUSTED_PROXIES` accepts IPv4 peers only and rejects unspecified and multicast addresses. The reader listener is IPv4-only, so IPv6 peers and these addresses matched no immediate peer and left trust silently off. A retained managed configuration or environment that contains one of them now stops `btctl` and the hub with a configuration error; remove the entry. The proxy now warns at startup when a trusted peer is the container's own default gateway: Docker relays host and other-network connections to a published port from that address, so trusting it let them choose their client address. The configuration reference and ADR-021 describe how to trust only the edge.
 - Bumped the pinned Alpine packages in `Dockerfile.btctl` after Alpine withdrew the old builds: `libexpat` `2.9.0-r0` (also in the embedded `btctl` bootstrap Dockerfile), `docker-cli` `29.8.2-r1` and `docker-cli-buildx` `0.34.1-r2`. `libexpat` `2.8.5-r0` was no longer served, which broke the `docker-smoke` bootstrap step on every branch.
 - Managed hub configuration retains a custom CWA login header across restarts and includes it in the deployment fingerprint. All proxy routes strip that assertion; shared validation rejects names that collide with managed context or credentials, including `User-Agent`.
