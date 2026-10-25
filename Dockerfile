@@ -21,7 +21,7 @@ RUN apk add --no-cache \
     libssl3=3.5.9-r0 \
     libuuid=2.42.3-r1 \
     libxml2=2.13.9-r2 \
-    nginx=1.30.4-r1 \
+    nginx=1.30.6-r0 \
     pcre2=10.49-r0
 
 # Copy requirements and install. Then strip packaging tooling that is only needed
