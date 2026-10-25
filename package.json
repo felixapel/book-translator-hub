@@ -1,6 +1,6 @@
 {
   "name": "cwa-ebook-translate-plugin",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "private": true,
   "description": "Bilingual paragraph-level LLM translation for CWA and Kavita readers.",
   "directories": {

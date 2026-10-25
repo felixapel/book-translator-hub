@@ -5,7 +5,7 @@
 (function () {
     'use strict';
     // ── Version & Telemetry ──────────────────────────────────────────
-    const BT_UI_VERSION = '2.5.0';
+    const BT_UI_VERSION = '2.5.1';
     console.log(`[BookTranslator] loaded version ${BT_UI_VERSION}`);
     const cfg = (typeof window !== 'undefined' && window.BOOK_TRANSLATOR) || {};
     function boundedInteger(value, minimum, maximum, fallback) {
