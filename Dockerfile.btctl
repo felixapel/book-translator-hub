@@ -3,11 +3,11 @@ FROM python:3.11-alpine@sha256:25976e9d34a0fab1f278cae931f34c8303d97bf0c0d7f85b6
 # The exporter sees the checkout read-only and never receives the Docker
 # socket. Pin Git's full installed closure to keep the bootstrap reproducible.
 RUN apk add --no-cache \
-    brotli-libs=1.2.0-r1 \
-    c-ares=1.34.8-r0 \
+    brotli-libs=1.2.1-r0 \
+    c-ares=1.34.9-r0 \
     git=2.54.0-r0 \
     git-init-template=2.54.0-r0 \
-    libcurl=8.22.0-r0 \
+    libcurl=8.23.0-r0 \
     libexpat=2.9.0-r0 \
     libidn2=2.3.8-r0 \
     libpsl=0.21.5-r3 \
@@ -20,8 +20,8 @@ FROM source-exporter AS operator
 
 # Docker is an operator-only dependency. It never enters the production image.
 RUN apk add --no-cache \
-    docker-cli=29.8.2-r1 \
-    docker-cli-buildx=0.34.1-r2
+    docker-cli=29.9.2-r0 \
+    docker-cli-buildx=0.38.1-r0
 
 ARG BTCTL_SOURCE_REVISION
 ARG BTCTL_SOURCE_VERSION

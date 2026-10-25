@@ -42,7 +42,7 @@ APK_PACKAGES = {
     "libuuid": "2.42.3-r1",
     "libgomp": "15.2.0-r5",
     "libxml2": "2.13.9-r2",
-    "nginx": "1.30.4-r1",
+    "nginx": "1.30.6-r0",
     "pcre2": "10.49-r0",
 }
 
@@ -129,8 +129,8 @@ class SupplyChainContractTests(unittest.TestCase):
         }
         self.assertEqual(installed["git"], "2.54.0-r0")
         self.assertEqual(installed["libexpat"], "2.9.0-r0")
-        self.assertEqual(installed["docker-cli"], "29.8.2-r1")
-        self.assertEqual(installed["docker-cli-buildx"], "0.34.1-r2")
+        self.assertEqual(installed["docker-cli"], "29.9.2-r0")
+        self.assertEqual(installed["docker-cli-buildx"], "0.38.1-r0")
         self.assertEqual(installed["bash"], "5.3.9-r1")
         self.assertTrue(all("=" in token for addition in additions for token in addition.split()))
         self.assertIn(BASE_IMAGE, dispatcher)
