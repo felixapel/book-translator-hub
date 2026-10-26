@@ -15,31 +15,45 @@
 </p>
 
 <p align="center">
-  <b>Bilingual reading overlay and translation engine for stock Calibre-Web-Automated and Kavita EPUB readers, powered by local or cloud LLMs.</b>
+  <b>Read DRM-free EPUBs next to their translation, inside the stock Calibre-Web-Automated and Kavita web readers.<br>
+  Translation runs on your own LLM server or on a cloud API you choose.</b>
 </p>
 
 ---
 
 <p align="center">
-  <img src="docs/assets/bilingual-reading-editorial.png" alt="Concept illustration of aligned original and translated paragraphs beside an e-reader" width="100%">
-  <br><sub>Editorial illustration of bilingual reading, not a product screenshot.</sub>
+  <img src="docs/assets/screenshot-cwa-bilingual.png" alt="Stock Calibre-Web-Automated web reader showing Alice's Adventures in Wonderland, each English paragraph followed by its Spanish translation, with the translator toolbar at the bottom" width="100%">
+  <br><sub>Real screenshot: the stock CWA 4.0.8 web reader in bilingual mode, English → Spanish, translated by a local Qwen model.
+  Book: <i>Alice's Adventures in Wonderland</i> (public domain, Project Gutenberg).</sub>
 </p>
 
-## ✨ What it does
+## ✨ Features
 
-- **Visible-work priority:** Sends the first visible paragraph on its own and prioritizes visible paragraphs ahead of bounded background work. Actual latency depends on the reader, provider, model, network and cache state.
-- **Bounded lookahead:** Can pre-translate a limited forward window while keeping visible requests ahead of background work. It is not a page-turn latency guarantee.
-- **Layered cache:** Uses an in-memory reading cache in the browser and a private SQLite cache on the server. Managed profiles do not store translated text in browser storage.
-- **SQLite WAL configuration:** Uses WAL, bounded busy timeouts, a memory-mapped I/O window and page cache settings. Operators should measure cache behavior on their own storage and workload.
-- **Language and reading controls:** Detects source language from reader metadata/HTML with a manual override, plus a target-language selector on the floating toolbar.
-- **Manual activation:** Each book entry and page reload starts with translation OFF, even if this browser previously translated the book. Book text is sent for translation only after the reader turns the mode on.
-- **E-Ink display mode:** Provides a high-contrast, low-motion presentation intended for compatible e-readers; verify it on the target browser and device.
-- **Versioned reader connectors:** Integrates with stock [Calibre-Web-Automated](https://github.com/crocodilestick/Calibre-Web-Automated) and exact Kavita EPUB contracts without modifying upstream images. See the compatibility matrix for acceptance limits.
-- **Server-side provider credentials:** Managed configurations keep API keys in the private server environment. Browser configuration omits provider keys; operators must protect their environment files and proxy boundary.
+- **Three reading modes:** Original, Bilingual (each paragraph followed by its translation) and Translated, cycled from a small floating toolbar.
+- **102 target languages:** The source language is detected from book metadata and HTML, with a manual override.
+- **Per-book glossary:** Pin how names and terms are translated so they stay consistent across chapters.
+- **Visible work first:** The first visible paragraph is sent on its own, and visible paragraphs go ahead of a bounded lookahead window. Latency still depends on the provider, model, network and cache.
+- **Layered cache:** An in-memory cache in the browser and a private SQLite (WAL) cache on the server, so a re-read chapter is not translated again. Managed profiles do not store translated text in browser storage.
+- **Export:** Save the translated chapter as a small EPUB for offline reading.
+- **Manual activation:** Every book opens with translation off. Book text is sent only after the reader turns a mode on.
+- **E-Ink display mode:** A high-contrast, low-motion presentation for compatible e-readers; verify it on your device.
+- **Stock readers, no fork:** A proxy injects one script tag into the stock CWA or Kavita page. Upstream images and libraries are never modified, and translations are never written back.
+- **Server-side credentials:** Provider API keys stay in the private server environment and never reach the browser.
 
----
+## 🧩 At a glance
 
-## 🚀 Supported installation
+| | |
+|---|---|
+| **Readers** | Stock [Calibre-Web-Automated](https://github.com/crocodilestick/Calibre-Web-Automated) 4.x and stock [Kavita](https://www.kavitareader.com/) `0.9.0.2` / `0.9.1.4`, EPUB web reader only. Exact versions: [compatibility matrix](docs/reference/compatibility.md). |
+| **LLM providers** | Any local OpenAI-compatible server (vLLM, Ollama, LM Studio); OpenAI, Anthropic, Gemini, Groq, Together, DeepSeek, MiniMax and OpenRouter; or a custom OpenAI-compatible endpoint. |
+| **Installation** | `btctl` universal hub on Unraid or Linux with Docker (CWA, Kavita or both), or the CWA-only Community Applications template on Unraid. |
+| **Container image** | `ghcr.io/felixapel/cwa-ebook-translate-plugin`, `linux/amd64`, pinned by digest, with SBOM and provenance attestations. |
+| **Privacy** | No telemetry, ads or accounts. With a local LLM and no cloud fallback, book text stays on your network. A cloud provider receives the paragraphs it translates. |
+| **License** | GPL-3.0 |
+
+## 🚀 Installation
+
+**You need:** a Docker host (stock Unraid 7.3.x or Linux with Docker Engine and the Compose plugin, x86_64), a running stock CWA and/or Kavita, and an LLM endpoint or a cloud API key.
 
 Choose a tag from the [published releases](https://github.com/felixapel/book-translator-hub/releases).
 `VERSION` identifies the checked-out source; changes on `main` may not yet be
@@ -77,17 +91,11 @@ LLM_PROVIDER=local
 LLM_MODEL=local-model
 LLM_API_KEY=
 BT_LOCAL_URL=http://local-llm:8000/v1/chat/completions
-BT_BATCH_SIZE=5
-BT_BATCH_SOURCE_TOKEN_BUDGET=0
-BT_BATCH_MAX_TOKENS=8192
-BT_MAX_BATCH_PARAGRAPHS=50
 ```
 
-Named remote providers, including Gemini, use their fixed HTTPS API endpoints
-and a server-side API key. Local and custom OpenAI-compatible backends are
-also supported through environment variables; select a cloud provider only in
-the private environment after reviewing its privacy and quota implications.
-Then run:
+A named cloud provider uses its fixed HTTPS endpoint and a server-side API key;
+review its privacy and quota implications first. A ChatGPT, Codex, Gemini or
+Antigravity consumer subscription is not an API credential. Then run:
 
 ```bash
 ./btctl plan --env /absolute/private/path/book-translator-hub.env
@@ -97,28 +105,25 @@ Then run:
 
 `plan` validates and reports the intended resources without changing the reader
 or deployment state. `install` commits state only after live postconditions pass.
-`doctor` is read-only and every check must report `ok`.
+`doctor` is read-only and every check must report `ok`. Open your reader through
+the configured public origin, open an EPUB and click **Original** on the toolbar
+to switch modes.
 
-Provider roles are selected entirely through the private environment, with
-shared defaults and optional per-reader overrides. The split profile retains
-its provider-only `btctl reconfigure` workflow. A hub provider change uses a
-reviewed `uninstall` with the old environment followed by `install` with the
-new one; translation data is retained, hub-owned session keys are regenerated,
-and all reader processes restart coherently, so tabs may require a fresh
-short-lived session.
-See the [configuration reference](docs/reference/configuration.md). A ChatGPT,
-Codex, Gemini or Antigravity consumer subscription is not an API credential.
+To change the provider later, run a reviewed `uninstall` with the old
+environment, then `install` with the new one. Translation data is kept;
+session keys are regenerated, so open tabs may need a reload. See the
+[configuration reference](docs/reference/configuration.md) for batching,
+fallback and per-reader provider settings.
 
 Stock Unraid requires root, Bash, Docker and a full checkout including `.git`.
 It does not require host Python, host Git or NerdTools to run `./btctl`; the
 launcher uses a temporary containerized operator when needed. Linux hosts use
 `BT_INSTALL_PROFILE=compose-existing`. Operators who need independent
 container isolation or CWA Authentik-forwarded identity can retain the split
-profile.
+profile. The full walkthrough is in the [`btctl` guide](docs/install/btctl.md).
 
-Community Applications uses a separate CWA-only combined-image profile. Install
-it only from a searchable listing whose template pins an immutable image digest;
-if no listing is present, use `btctl`. See the
+Community Applications uses a separate CWA-only combined-image profile with a
+digest-pinned image; search for **book-translator-hub** in the Apps tab. See the
 [Community Applications guide](docs/install/community-applications.md).
 
 ## 🛡️ Runtime boundary
@@ -139,32 +144,12 @@ their documented boundaries. Do not publish the API, disable authentication,
 or add a route that bypasses the managed proxy. Advanced CWA Authentik
 deployments have a separate fail-closed profile and guide.
 
-CWA `4.0.6` is the exact CWA contract reference; each deployed candidate still
-requires browser acceptance. Kavita has separate exact `0.9.0.2` and
-`0.9.1.4` contracts. `0.9.1.4` with stock OIDC login is browser-accepted on
-the managed hub; its native-password login is covered only by an isolated
-contract fixture. See the
+CWA `4.0.6` is the exact CWA contract reference and `4.0.8` is browser-accepted.
+Kavita has separate exact `0.9.0.2` and `0.9.1.4` contracts. `0.9.1.4` with
+stock OIDC login is browser-accepted on the managed hub; its native-password
+login is covered only by an isolated contract fixture. See the
 [compatibility matrix](docs/reference/compatibility.md) before choosing a
 reader version. Manga, PDF and library writeback are not supported.
-
-## 💖 Sponsors & Community Support
-
-Book Translator Hub is 100% free and open-source software built for the self-hosted and reading communities. Development, local GPU testing (vLLM/Ollama), and continuous integration are maintained independently.
-
-If you find Book Translator Hub valuable for your daily reading, please consider supporting the project:
-
-<p align="center">
-  <a href="https://github.com/sponsors/felixapel">
-    <img src="https://img.shields.io/badge/Sponsor%20on-GitHub%20Sponsors-ea4aaa?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Sponsors">
-  </a>
-  &nbsp;&nbsp;
-  <a href="https://ko-fi.com/felixapel">
-    <img src="https://img.shields.io/badge/Support%20on-Ko--fi-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Support on Ko-fi">
-  </a>
-</p>
-
-* **Hardware:** Supports purchasing hardware for testing on physical E-Ink devices and running local GPU benchmarks.
-* **Feature Requests:** Backers can directly influence the roadmap for future reader integrations (Audiobookshelf, Komga, Readium).
 
 ## 📖 Documentation
 
@@ -187,10 +172,21 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 project. Use the issue templates for reproducible bugs and feature proposals.
 Report vulnerabilities through the private channel in [SECURITY.md](SECURITY.md).
 
-Book Translator Hub is GPL-3.0 software with no telemetry, ads or subscription.
-Support is optional through [Ko-fi](https://ko-fi.com/felixapel) or
-[GitHub Sponsors](https://github.com/sponsors/felixapel). The project is not
-affiliated with or endorsed by CWA, Kavita, Calibre, Google or any LLM provider.
+## 💖 Sponsors
 
-See [LICENSE](LICENSE) for the license text.
+Book Translator Hub is free GPL-3.0 software with no telemetry, ads or
+subscription, maintained independently. If it helps your reading, you can
+support hardware for E-Ink device testing and local GPU benchmarks:
 
+<p align="center">
+  <a href="https://github.com/sponsors/felixapel">
+    <img src="https://img.shields.io/badge/Sponsor%20on-GitHub%20Sponsors-ea4aaa?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Sponsors">
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://ko-fi.com/felixapel">
+    <img src="https://img.shields.io/badge/Support%20on-Ko--fi-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Support on Ko-fi">
+  </a>
+</p>
+
+The project is not affiliated with or endorsed by CWA, Kavita, Calibre, Google
+or any LLM provider. See [LICENSE](LICENSE) for the license text.
