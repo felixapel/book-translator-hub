@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation: Kavita `0.9.1.4` with stock OIDC login and the managed hub on Unraid 7.3.4 are recorded as browser-accepted. The README no longer claims a multi-architecture image (it is `linux/amd64` only) or a bug-bounty programme. Malformed configuration-table rows were fixed and their examples use a generic LAN address. The pull request template moved to `.github/pull_request_template.md`, so GitHub and Gitea apply it by default. The unused `docs/assets/demo.gif` from the project's former name was removed.
+
 ## [2.5.1] - 2026-10-25
 
 ### Fixed

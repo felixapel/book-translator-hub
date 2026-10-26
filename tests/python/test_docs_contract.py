@@ -118,8 +118,7 @@ class DocumentationContractTests(unittest.TestCase):
             template = (
                 fixture
                 / ".github"
-                / "PULL_REQUEST_TEMPLATE"
-                / "pull_request.md"
+                / "pull_request_template.md"
             )
             template.write_text(
                 template.read_text(encoding="utf-8")
@@ -131,7 +130,7 @@ class DocumentationContractTests(unittest.TestCase):
 
             self.assertTrue(any(
                 "broken relative link in "
-                ".github/PULL_REQUEST_TEMPLATE/pull_request.md"
+                ".github/pull_request_template.md"
                 in error
                 for error in errors
             ))
