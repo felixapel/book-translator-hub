@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation: Kavita `0.9.1.4` with stock OIDC login and the managed hub on Unraid 7.3.4 are recorded as browser-accepted. The README no longer claims a multi-architecture image (it is `linux/amd64` only) or a bug-bounty programme. Malformed configuration-table rows were fixed and their examples use a generic LAN address. The pull request template moved to `.github/pull_request_template.md`, so GitHub and Gitea apply it by default. The unused `docs/assets/demo.gif` from the project's former name was removed.
 - The README leads with a real screenshot of the stock CWA reader in bilingual mode (a public-domain book translated by a local model) instead of a concept illustration, and adds a features list, an at-a-glance table and install prerequisites.
 
+### Fixed
+
+- The settings menu's position controls showed hard-coded Spanish whatever the interface language ("↕ Mover a Top", "Libre (arrastrada)"). They are now translated in all five interface languages.
+
 ## [2.5.1] - 2026-10-25
 
 ### Fixed
