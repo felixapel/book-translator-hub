@@ -9,7 +9,7 @@
   <a href="https://github.com/felixapel/book-translator-hub/actions"><img src="https://img.shields.io/badge/CI-gated-0ea5e9.svg?style=flat-square" alt="CI-gated"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square" alt="License: GPL-3.0"></a>
   <img src="https://img.shields.io/badge/Python-3.11-3776ab.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.11">
-  <img src="https://img.shields.io/badge/Docker-Multi--Arch-2496ed.svg?style=flat-square&logo=docker&logoColor=white" alt="Docker">
+  <img src="https://img.shields.io/badge/Docker-linux%2Famd64-2496ed.svg?style=flat-square&logo=docker&logoColor=white" alt="Docker linux/amd64">
   <a href="https://github.com/sponsors/felixapel"><img src="https://img.shields.io/badge/Sponsor-GitHub-ea4aaa.svg?style=flat-square&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors"></a>
   <a href="https://ko-fi.com/felixapel"><img src="https://img.shields.io/badge/Donate-Ko--fi-ff5e5b.svg?style=flat-square&logo=kofi&logoColor=white" alt="Ko-fi"></a>
 </p>
@@ -141,8 +141,9 @@ deployments have a separate fail-closed profile and guide.
 
 CWA `4.0.6` is the exact CWA contract reference; each deployed candidate still
 requires browser acceptance. Kavita has separate exact `0.9.0.2` and
-`0.9.1.4` contracts; the `0.9.1.4` native account/broker fixture does not
-establish browser or OIDC acceptance. See the
+`0.9.1.4` contracts. `0.9.1.4` with stock OIDC login is browser-accepted on
+the managed hub; its native-password login is covered only by an isolated
+contract fixture. See the
 [compatibility matrix](docs/reference/compatibility.md) before choosing a
 reader version. Manga, PDF and library writeback are not supported.
 
@@ -162,7 +163,7 @@ If you find Book Translator Hub valuable for your daily reading, please consider
   </a>
 </p>
 
-* **Bug Bounties & Hardware:** Supports purchasing hardware for testing on physical E-Ink devices and running local GPU benchmarks.
+* **Hardware:** Supports purchasing hardware for testing on physical E-Ink devices and running local GPU benchmarks.
 * **Feature Requests:** Backers can directly influence the roadmap for future reader integrations (Audiobookshelf, Komga, Readium).
 
 ## 📖 Documentation

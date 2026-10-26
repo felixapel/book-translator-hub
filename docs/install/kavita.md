@@ -9,9 +9,10 @@ This integration accepts only the following exact stock
 [Kavita](https://www.kavitareader.com/) contracts: `0.9.0.2`, the established
 managed default, and `0.9.1.4`, whose native `/api/Account` and broker exchange
 were verified in an isolated container. The `0.9.1.4` fixture requires a
-positive account `id` and matching `kavitaVersion`. It does not verify its
-public-browser or OIDC path. Do not infer support for another `0.9.x` version,
-a mutable tag, or OIDC on `0.9.1.4` from that native fixture.
+positive account `id` and matching `kavitaVersion`. `0.9.1.4` with stock OIDC
+(Authentik) login was also browser-accepted on the managed hub through its
+public HTTPS origin. Do not infer support for another `0.9.x` version or a
+mutable tag from either check.
 
 Only the web EPUB route
 `/library/<libraryId>/series/<seriesId>/book/<chapterId>` and its
@@ -117,8 +118,8 @@ client address and browser User-Agent.
 
 The native refresh token is never read. No Kavita credential is persisted in
 SQLite, lifecycle state, generated environment files or browser translator
-configuration. The isolated `0.9.1.4` native exchange does not establish an
-OIDC browser claim. Keep the stock account endpoint reachable at the configured
+configuration. The isolated `0.9.1.4` native exchange is not a browser check;
+OIDC browser acceptance comes from the separate physical check. Keep the stock account endpoint reachable at the configured
 internal Kavita upstream; custom authentication plugins are not certified.
 
 ## Browser acceptance
@@ -152,6 +153,7 @@ Before relying on the connector:
 
 Automated route, DOM, native-token exchange, credential-stripping and SPA
 teardown checks do not replace physical stock-Unraid and real-Kavita browser
-acceptance for the exact configured version. In particular, `0.9.1.4` OIDC and
-browser behavior are not live verified. Community Applications does not install
+acceptance for the exact configured version. For `0.9.1.4`, only stock OIDC
+login is browser-accepted; native-password login has no live browser check.
+Community Applications does not install
 this profile; use `btctl`.

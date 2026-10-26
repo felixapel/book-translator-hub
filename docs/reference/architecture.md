@@ -38,8 +38,8 @@ translation/cache/provider core. There are three deployment profiles:
    `0.9.0.2` and `0.9.1.4` have separate exact contracts for the
    `/library/:libraryId/series/:seriesId/book/:chapterId` route and top-level
    `.book-content` adapter; see the [compatibility matrix](compatibility.md).
-   The `0.9.1.4` native account/broker fixture is isolated-container coverage,
-   not live browser or OIDC acceptance. The API is
+   The `0.9.1.4` native account/broker fixture is isolated-container coverage;
+   `0.9.1.4` OIDC login is separately browser-accepted. The API is
    reachable same-origin under `/bt-api/`, so CORS never applies. Because only
    one tag is injected instead of maintaining a reader fork, upstream template
    updates become explicit compatibility events. See `proxy/nginx.conf.template`

@@ -145,9 +145,9 @@ Sign out and back in through that origin, open the exact EPUB route, and inspect
   configured reader version, and `expires_in` no greater than 300. The cookie
   itself is HttpOnly and therefore correctly absent from JavaScript storage.
 - The isolated native `0.9.1.4` account/broker fixture requires a positive
-  account `id` and matching `kavitaVersion`. It does not establish `0.9.1.4`
-  browser or OIDC acceptance; do not troubleshoot a browser OIDC failure by
-  assuming that fixture covers it.
+  account `id` and matching `kavitaVersion`. It is not a browser check: `0.9.1.4`
+  OIDC acceptance comes from a separate physical browser check, so do not
+  troubleshoot a browser OIDC failure by assuming that fixture covers it.
 - A `401` means the native proof, version, origin, observed address or
   User-Agent did not match. A `503` means `/api/Account` was unreachable or
   returned a malformed/oversized response. `doctor` catches container,
