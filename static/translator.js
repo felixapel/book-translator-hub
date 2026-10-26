@@ -339,7 +339,7 @@
             cloudActive: 'Cloud translation is active: book text is sent to the configured remote primary provider.',
             cloudSecondary: 'Allow secondary remote fallback',
             cloudSecondaryPrivacy: 'The primary provider is already remote. This additionally permits the configured remote fallback for this tab.',
-            barPos: 'Position', posTop: 'Top', posBottom: 'Bottom', posReset: 'Reset to bottom', posDragHint: 'Touch or drag the bar anywhere to move it.',
+            barPos: 'Position', posTop: 'Top', posBottom: 'Bottom', posReset: 'Reset to bottom', posMoveTop: 'Move to top', posMoveBottom: 'Move to bottom', posCustom: 'Free (dragged)', posDragHint: 'Touch or drag the bar anywhere to move it.',
             dbgQueue: 'Queue', dbgGen: 'Generation', dbgTrigger: 'Last trigger',
             stylePreset: 'Text style', presetDefault: 'Default', presetContrast: 'High contrast', presetLarge: 'Large text',
             glossary: 'Glossary', glossaryAdd: 'Add', glossarySource: 'Term', glossaryTarget: 'Translation',
@@ -371,7 +371,7 @@
             cloudActive: 'La traducción cloud está activa: el texto se envía al proveedor primario remoto configurado.',
             cloudSecondary: 'Permitir fallback remoto secundario',
             cloudSecondaryPrivacy: 'El proveedor primario ya es remoto. Esto además permite el fallback remoto configurado durante esta pestaña.',
-            barPos: 'Posición', posTop: 'Arriba', posBottom: 'Abajo', posReset: 'Restablecer abajo', posDragHint: 'Arrastra la barra para moverla libremente.',
+            barPos: 'Posición', posTop: 'Arriba', posBottom: 'Abajo', posReset: 'Restablecer abajo', posMoveTop: 'Mover arriba', posMoveBottom: 'Mover abajo', posCustom: 'Libre (arrastrada)', posDragHint: 'Arrastra la barra para moverla libremente.',
             dbgQueue: 'Cola', dbgGen: 'Generación', dbgTrigger: 'Último disparo',
             restoring: 'Restaurando traducciones guardadas…',
             stylePreset: 'Estilo de texto', presetDefault: 'Predeterminado', presetContrast: 'Alto contraste', presetLarge: 'Texto grande',
@@ -393,7 +393,7 @@
             cloudActive: 'Traduction cloud active : le texte du livre est envoyé au fournisseur distant principal configuré.',
             cloudSecondary: 'Autoriser le fallback distant secondaire',
             cloudSecondaryPrivacy: 'Le fournisseur principal est déjà distant. Cela autorise en plus le fallback distant configuré pendant cet onglet.',
-            barPos: 'Position', posTop: 'Haut', posBottom: 'Bas', posReset: 'Réinitialiser en bas', posDragHint: 'Touchez ou faites glisser la barre pour la déplacer.',
+            barPos: 'Position', posTop: 'Haut', posBottom: 'Bas', posReset: 'Réinitialiser en bas', posMoveTop: 'Déplacer en haut', posMoveBottom: 'Déplacer en bas', posCustom: 'Libre (déplacée)', posDragHint: 'Touchez ou faites glisser la barre pour la déplacer.',
             dbgQueue: 'File', dbgGen: 'Génération', dbgTrigger: 'Dernier déclenchement',
             stylePreset: 'Style de texte', presetDefault: 'Par défaut', presetContrast: 'Contraste élevé', presetLarge: 'Grand texte',
             sourceUnknown: 'Sélectionnez la langue source',
@@ -414,7 +414,7 @@
             cloudActive: 'Cloud-Übersetzung ist aktiv: Buchtext wird an den konfigurierten primären Remote-Anbieter gesendet.',
             cloudSecondary: 'Sekundären Remote-Fallback erlauben',
             cloudSecondaryPrivacy: 'Der primäre Anbieter ist bereits remote. Dies erlaubt zusätzlich den konfigurierten Remote-Fallback für diesen Tab.',
-            barPos: 'Position', posTop: 'Oben', posBottom: 'Unten', posReset: 'Nach unten zurücksetzen', posDragHint: 'Leiste berühren oder ziehen, um sie zu verschieben.',
+            barPos: 'Position', posTop: 'Oben', posBottom: 'Unten', posReset: 'Nach unten zurücksetzen', posMoveTop: 'Nach oben verschieben', posMoveBottom: 'Nach unten verschieben', posCustom: 'Frei (verschoben)', posDragHint: 'Leiste berühren oder ziehen, um sie zu verschieben.',
             dbgQueue: 'Warteschlange', dbgGen: 'Generation', dbgTrigger: 'Letzter Auslöser',
             stylePreset: 'Textstil', presetDefault: 'Standard', presetContrast: 'Hoher Kontrast', presetLarge: 'Großer Text',
             sourceUnknown: 'Ausgangssprache auswählen',
@@ -435,7 +435,7 @@
             cloudActive: 'Tradução cloud ativa: o texto do livro é enviado ao provedor remoto principal configurado.',
             cloudSecondary: 'Permitir fallback remoto secundário',
             cloudSecondaryPrivacy: 'O provedor principal já é remoto. Isto permite adicionalmente o fallback remoto configurado durante esta aba.',
-            barPos: 'Posição', posTop: 'Topo', posBottom: 'Base', posReset: 'Repor na base', posDragHint: 'Toque ou arraste a barra para movê-la.',
+            barPos: 'Posição', posTop: 'Topo', posBottom: 'Base', posReset: 'Repor na base', posMoveTop: 'Mover para o topo', posMoveBottom: 'Mover para a base', posCustom: 'Livre (arrastada)', posDragHint: 'Toque ou arraste a barra para movê-la.',
             dbgQueue: 'Fila', dbgGen: 'Geração', dbgTrigger: 'Último disparo',
             stylePreset: 'Estilo de texto', presetDefault: 'Padrão', presetContrast: 'Alto contraste', presetLarge: 'Texto grande',
             sourceUnknown: 'Selecione o idioma de origem',
@@ -1080,7 +1080,7 @@
         const curPos = localStorage.getItem('bt_pos') || 'bottom';
         const isTop = curPos === 'top';
         const isCustom = curPos !== 'bottom' && curPos !== 'top';
-        const posLabel = isTop ? (t.posTop || 'Arriba') : isCustom ? 'Libre (arrastrada)' : (t.posBottom || 'Abajo');
+        const posLabel = isTop ? t.posTop : isCustom ? t.posCustom : t.posBottom;
 
         menu.innerHTML =
             `<div class="bt-menu-header">${t.bookTranslator}<span class="bt-menu-ver">v${BT_UI_VERSION}</span></div>` +
@@ -1100,7 +1100,7 @@
             `<div class="bt-menu-row"><span>${t.barPos || 'Posición'}</span><span class="bt-menu-val">${posLabel}</span></div>` +
             `<div class="bt-menu-sep"></div>` +
             `<button type="button" class="bt-menu-item" data-action="toggle-pos">` +
-                `<span>↕ Mover a ${isTop ? (t.posBottom || 'Abajo') : (t.posTop || 'Arriba')}</span>` +
+                `<span>↕ ${isTop ? t.posMoveBottom : t.posMoveTop}</span>` +
             `</button>` +
             `<button type="button" class="bt-menu-item" data-action="reset-pos">` +
                 `<span>↺ ${t.posReset || 'Restablecer abajo'}</span>` +

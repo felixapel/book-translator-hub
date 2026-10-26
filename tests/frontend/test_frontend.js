@@ -286,6 +286,54 @@ async function assertProviderPolicyControls() {
     }
 }
 
+async function renderPositionMenu(language, storedPosition) {
+    const dom = new JSDOM(
+        '<!DOCTYPE html><html><body><div id="viewer"><iframe></iframe></div></body></html>',
+        { url: 'http://reader.example.test/read/1', runScripts: 'dangerously' }
+    );
+    Object.defineProperty(dom.window.navigator, 'language', { value: language });
+    dom.window.BOOK_TRANSLATOR = { apiUrl: '/bt-api', authMode: 'cwa_session' };
+    dom.window.localStorage.setItem('bt_mode', 'off');
+    if (storedPosition) dom.window.localStorage.setItem('bt_pos', storedPosition);
+    dom.window.fetch = async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ primary: 'local', fallback: null, generation: '0123456789abcdef0123456789abcdef' }),
+        headers: { get: () => null }
+    });
+    const script = dom.window.document.createElement('script');
+    script.textContent = code;
+    dom.window.document.body.appendChild(script);
+    const deadline = Date.now() + 2000;
+    while (!dom.window.document.querySelector('#bt-menu') && Date.now() < deadline) await wait(10);
+    await wait(20);
+    const menu = dom.window.document.querySelector('#bt-menu');
+    const result = {
+        move: menu.querySelector('[data-action="toggle-pos"]').textContent.trim(),
+        position: Array.from(menu.querySelectorAll('.bt-menu-row'))
+            .find(row => row.querySelector('.bt-menu-val')
+                && row.textContent.startsWith(language.startsWith('es') ? 'Posición' : 'Position'))
+            .querySelector('.bt-menu-val').textContent.trim()
+    };
+    dom.window.close();
+    return result;
+}
+
+async function assertPositionControlsFollowTheInterfaceLanguage() {
+    const english = await renderPositionMenu('en-US');
+    assert.strictEqual(english.move, '↕ Move to top');
+    assert.strictEqual(english.position, 'Bottom');
+    const englishCustom = await renderPositionMenu('en-US', JSON.stringify({ x: 40, y: 60 }));
+    assert.strictEqual(englishCustom.position, 'Free (dragged)');
+    assert.strictEqual(englishCustom.move, '↕ Move to top');
+    const englishTop = await renderPositionMenu('en-US', 'top');
+    assert.strictEqual(englishTop.move, '↕ Move to bottom');
+    const spanish = await renderPositionMenu('es-ES');
+    assert.strictEqual(spanish.move, '↕ Mover arriba');
+    const spanishCustom = await renderPositionMenu('es-ES', JSON.stringify({ x: 40, y: 60 }));
+    assert.strictEqual(spanishCustom.position, 'Libre (arrastrada)');
+}
+
 async function assertStalePolicyIsRefetchedWithoutTranslationReplay() {
     const staleDom = new JSDOM(
         '<!DOCTYPE html><html><body><div id="viewer"><iframe></iframe></div></body></html>',
@@ -2196,6 +2244,7 @@ async function runTest() {
     );
 
     await assertProviderPolicyControls();
+    await assertPositionControlsFollowTheInterfaceLanguage();
     await assertStalePolicyIsRefetchedWithoutTranslationReplay();
     await assertAmbiguous429IsTerminal();
     await assertConfiguredBatchSizeIsUsed();
